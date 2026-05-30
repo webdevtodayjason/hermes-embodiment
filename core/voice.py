@@ -111,9 +111,23 @@ stop_speaking = interrupt   # alias
 
 
 def _set_active(ctx: "_PlayCtx") -> None:
+    """Install ``ctx`` as THE active playback, PREEMPTING any prior one. A new reply
+    (text or Telegram → another ``speak_async``) must STOP the previous TTS, not
+    layer a second ``paplay`` over it — otherwise you hear both at once (double
+    audio). Swap ``_active_ctx`` under the lock, then cancel the previous playback
+    OUTSIDE the lock (kill/close can block briefly): set its cancel flag, close its
+    HTTP stream, kill its player. The preempted worker's ``finally`` then skips its
+    ``on_done`` (cancel is set) and its ``_clear_active`` no-ops (we're active now),
+    so it can't stomp the new turn's state. Same teardown ``interrupt()`` uses, but
+    here a newer speech — not a PTT press — is what supersedes her."""
     global _active_ctx
     with _play_lock:
+        prev = _active_ctx
         _active_ctx = ctx
+    if prev is not None and prev is not ctx:
+        prev.cancel.set()                  # streaming loop / fallback bail out
+        _close_response(prev.response)      # unblock a worker parked on iter_content
+        _kill_player(prev.player)           # SIGTERM -> SIGKILL the old audio player
 
 
 def _clear_active(ctx: "_PlayCtx") -> None:

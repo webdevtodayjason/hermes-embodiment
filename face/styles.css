@@ -635,9 +635,241 @@ body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; botto
   transition: opacity 0.18s ease;
 }
 
+/* ==========================================================================
+   TOUCH CONTROL PANEL OVERLAY  (pointer events; big targets for 800×480)
+   Layers above the face (z 40–60). The face keeps rendering behind it.
+   ========================================================================== */
+
+/* Opener: neon grip pill, bottom-center. Big invisible hit area, small visible
+   grip so it doesn't crowd the wordmark. Hidden while the panel is open. */
+.cp-handle {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 168px;
+  height: 40px;            /* generous finger target */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 0 5px 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  z-index: 40;
+  opacity: 0.85;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.cp-handle:hover { opacity: 1; }
+.cp-handle.cp-hidden { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(10px); }
+.cp-handle-grip {
+  width: 92px;
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #00f0ff, #bd00ff);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.5), 0 0 14px rgba(189, 0, 255, 0.35);
+}
+.cp-handle-chev {
+  font-size: 13px;
+  line-height: 8px;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 6px rgba(0, 240, 255, 0.6);
+  opacity: 0.8;
+}
+
+/* Tap-away backdrop — faint dim, catches taps outside the panel. */
+.cp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(2, 2, 10, 0.45);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.cp-backdrop.cp-visible { opacity: 1; }
+
+/* Panel: slides up from the bottom edge. Translucent dark + neon trim. */
+.cp-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translate(-50%, 105%);   /* off-screen below until opened */
+  width: min(580px, 94vw);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 24px 26px 24px;
+  background: rgba(6, 6, 18, 0.92);
+  border: 1px solid rgba(189, 0, 255, 0.28);
+  border-bottom: none;
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.6), 0 0 28px rgba(0, 240, 255, 0.12);
+  backdrop-filter: blur(10px);
+  transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.cp-panel.cp-visible { transform: translate(-50%, 0); }
+
+.cp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cp-title {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: #ffffff;
+  text-shadow: 0 0 8px rgba(189, 0, 255, 0.4);
+}
+.cp-close {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+}
+.cp-close:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* Slider rows */
+.cp-row { display: flex; flex-direction: column; gap: 8px; }
+.cp-row-top { display: flex; align-items: baseline; justify-content: space-between; }
+.cp-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.7);
+}
+.cp-value {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 6px rgba(0, 240, 255, 0.4);
+  min-width: 56px;
+  text-align: right;
+}
+
+/* Custom finger-friendly slider: tall hit area, thick track, big thumb. */
+.cp-slider {
+  position: relative;
+  height: 56px;            /* big touch target */
+  display: flex;
+  align-items: center;
+  touch-action: none;      /* pointer-driven; stop the browser stealing the drag */
+  cursor: pointer;
+  outline: none;
+}
+.cp-track {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.cp-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0%;
+  background: linear-gradient(90deg, #00f0ff, #bd00ff);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+}
+.cp-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: 34px;
+  height: 34px;
+  margin-left: -17px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid var(--neon-purple);
+  box-shadow: 0 0 10px rgba(189, 0, 255, 0.6), 0 0 4px rgba(0, 240, 255, 0.5);
+  transform: translateY(-50%);
+  pointer-events: none;    /* the whole .cp-slider handles the pointer */
+}
+
+/* Push-to-Talk — big press-and-hold target; glows while held / listening. */
+.cp-ptt {
+  position: relative;
+  height: 84px;
+  margin-top: 2px;
+  border-radius: 14px;
+  background: rgba(0, 240, 255, 0.05);
+  border: 1.5px solid rgba(0, 240, 255, 0.35);
+  color: #ffffff;
+  cursor: pointer;
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  touch-action: none;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+.cp-ptt-label {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+}
+.cp-ptt-hint {
+  font-family: var(--font-body);
+  font-size: 9px;
+  letter-spacing: 2px;
+  opacity: 0.5;
+  text-transform: uppercase;
+}
+.cp-ptt.cp-on {
+  background: rgba(0, 240, 255, 0.18);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 26px rgba(0, 240, 255, 0.55), inset 0 0 18px rgba(0, 240, 255, 0.18);
+  transform: scale(0.985);
+}
+.cp-ptt.cp-on .cp-ptt-label { color: #ffffff; text-shadow: 0 0 12px rgba(0, 240, 255, 0.9); }
+
+/* Tap-ripple layer (visible touch confirmation). Never intercepts input. */
+.cp-ripple-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  overflow: hidden;
+}
+.cp-ripple {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,240,255,0.55) 0%, rgba(189,0,255,0.25) 50%, rgba(0,0,0,0) 70%);
+  transform: scale(0.2);
+  opacity: 0.9;
+  animation: cpRipple 0.6s ease-out forwards;
+}
+@keyframes cpRipple {
+  to { transform: scale(7); opacity: 0; }
+}
+
 /* Reduced motion: neutralise CSS transitions/keyframes (blink, icon pulses,
-   crossfades). Antigravity's rAF physics/particles are left intact per the
-   byte-for-byte directive — this only calms the CSS-driven motion. */
+   crossfades, panel slide, ripple). Antigravity's rAF physics/particles are
+   left intact per the byte-for-byte directive — this only calms CSS motion. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;

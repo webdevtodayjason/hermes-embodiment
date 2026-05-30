@@ -457,6 +457,66 @@
     </div>
   </div>
 
+  <!-- ========================================================================
+       TOUCH CONTROL PANEL OVERLAY  (pointer events: DSI ft5x06 touch + mouse)
+       Tap the neon handle (or swipe up) → slide-in panel: Brightness + Volume
+       sliders + Push-to-Talk. Renders ON TOP of the face; the face keeps running
+       behind it. Talks to the same-origin embody server (core.controls).
+       ===================================================================== -->
+
+  <!-- Opener: discoverable neon grip pill at bottom-center (tap or swipe up). -->
+  <button id="cp-handle" class="cp-handle" type="button" aria-label="Open controls" aria-expanded="false">
+    <span class="cp-handle-grip"></span>
+    <span class="cp-handle-chev">⌃</span>
+  </button>
+
+  <!-- Tap-away backdrop (dismiss) -->
+  <div id="cp-backdrop" class="cp-backdrop" hidden></div>
+
+  <!-- Slide-in panel -->
+  <section id="cp-panel" class="cp-panel" role="dialog" aria-label="Controls" aria-hidden="true">
+    <header class="cp-head">
+      <span class="cp-title">· CONTROLS ·</span>
+      <button id="cp-close" class="cp-close" type="button" aria-label="Close controls">×</button>
+    </header>
+
+    <!-- Brightness 0–100% -->
+    <div class="cp-row">
+      <div class="cp-row-top">
+        <span class="cp-label">BRIGHTNESS</span>
+        <span class="cp-value" id="cp-bright-val">—</span>
+      </div>
+      <div class="cp-slider" id="cp-bright" role="slider" tabindex="0"
+           aria-label="Brightness" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="cp-track"><div class="cp-fill" id="cp-bright-fill"></div></div>
+        <div class="cp-thumb" id="cp-bright-thumb"></div>
+      </div>
+    </div>
+
+    <!-- Volume 0–150% -->
+    <div class="cp-row">
+      <div class="cp-row-top">
+        <span class="cp-label">VOLUME</span>
+        <span class="cp-value" id="cp-vol-val">—</span>
+      </div>
+      <div class="cp-slider" id="cp-vol" role="slider" tabindex="0"
+           aria-label="Volume" aria-valuemin="0" aria-valuemax="150" aria-valuenow="0">
+        <div class="cp-track"><div class="cp-fill" id="cp-vol-fill"></div></div>
+        <div class="cp-thumb" id="cp-vol-thumb"></div>
+      </div>
+    </div>
+
+    <!-- Push-to-Talk (press & hold) -->
+    <button id="cp-ptt" class="cp-ptt" type="button" aria-label="Push to talk (press and hold)">
+      <span class="cp-ptt-ring"></span>
+      <span class="cp-ptt-label">PUSH&nbsp;TO&nbsp;TALK</span>
+      <span class="cp-ptt-hint">press &amp; hold</span>
+    </button>
+  </section>
+
+  <!-- Tap-ripple layer (visible touch confirmation; pointer-events:none) -->
+  <div id="cp-ripple-layer" class="cp-ripple-layer" aria-hidden="true"></div>
+
   <script src="app.js"></script>
 </body>
 </html>

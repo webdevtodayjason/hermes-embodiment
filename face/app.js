@@ -1889,6 +1889,12 @@ window.setMinnieMood = function(mood) {
 };
 window.setEmbodyMood = window.setMinnieMood;
 
+// Read the current activity state (used by the control panel's PTT to restore
+// her look after a press-and-hold). Returns null before init.
+window.getEmbodyState = function() {
+  return minnie ? minnie.currentState : null;
+};
+
 function changeState(state) {
   window.setState(state);
 }
@@ -1896,3 +1902,270 @@ function changeState(state) {
 function changeMood(mood) {
   window.setEmbodyMood(mood);
 }
+
+// ==========================================================================
+// TOUCH CONTROL PANEL  (pointer events: DSI ft5x06 touch + mouse)
+// --------------------------------------------------------------------------
+// A slide-in overlay (Brightness / Volume sliders + Push-to-Talk) layered ON
+// TOP of the face — it never touches MinnieController's animation/mood loop. It
+// talks to the same-origin embody server (embody.core.controls):
+//   GET  /control/state            -> {brightness:0-100, volume:0-150, listening:bool}
+//   POST /control/brightness {value:0-100}
+//   POST /control/volume     {value:0-150}
+//   POST /control/ptt        {action:"start"|"stop"}
+// Every request is wrapped + timed out, so with no server (offline/file://) the
+// panel still opens and drags — the POSTs just no-op. Pointer events mean one
+// code path serves touch AND mouse.
+// ==========================================================================
+class ControlPanel {
+  constructor() {
+    this.handle = document.getElementById('cp-handle');
+    this.backdrop = document.getElementById('cp-backdrop');
+    this.panel = document.getElementById('cp-panel');
+    this.closeBtn = document.getElementById('cp-close');
+    this.ptt = document.getElementById('cp-ptt');
+    this.rippleLayer = document.getElementById('cp-ripple-layer');
+    if (!this.handle || !this.panel) return; // markup absent -> inert
+
+    this.isOpen = false;
+    this.autoHideMs = 8000;     // auto-dismiss after ~8s idle
+    this.autoHideTimer = null;
+    this.pttActive = false;
+    this.pttPrevState = null;
+
+    try {
+      this.reduceMotion = !!(window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { this.reduceMotion = false; }
+
+    this.bright = this.setupSlider({
+      root: 'cp-bright', fill: 'cp-bright-fill', thumb: 'cp-bright-thumb',
+      val: 'cp-bright-val', min: 0, max: 100, suffix: '%', path: '/control/brightness'
+    });
+    this.vol = this.setupSlider({
+      root: 'cp-vol', fill: 'cp-vol-fill', thumb: 'cp-vol-thumb',
+      val: 'cp-vol-val', min: 0, max: 150, suffix: '%', path: '/control/volume'
+    });
+
+    this.bindOpener();
+    this.bindDismiss();
+    this.bindPTT();
+    this.bindRipple();
+  }
+
+  // --- tiny utilities ---
+  debounce(fn, ms) {
+    let t = null;
+    return (...a) => { if (t) clearTimeout(t); t = setTimeout(() => { t = null; fn(...a); }, ms); };
+  }
+
+  async postCtl(path, body) {
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 1500);
+      await fetch(path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body), cache: 'no-store', signal: c.signal
+      });
+      clearTimeout(t);
+    } catch (e) { /* offline / no server — controls are best-effort */ }
+  }
+
+  async getState() {
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 1500);
+      const r = await fetch('/control/state', { cache: 'no-store', signal: c.signal });
+      clearTimeout(t);
+      if (r && r.ok) return await r.json();
+    } catch (e) { /* offline — keep defaults */ }
+    return null;
+  }
+
+  // --- big finger-friendly slider built on pointer events ---
+  setupSlider(o) {
+    const root = document.getElementById(o.root);
+    const fill = document.getElementById(o.fill);
+    const thumb = document.getElementById(o.thumb);
+    const valEl = document.getElementById(o.val);
+    if (!root) return { set() {}, get() { return o.min; } };
+
+    let value = o.min;
+    let dragging = false;
+    const post = this.debounce((v) => this.postCtl(o.path, { value: v }), 120);
+    const self = this;
+
+    const valFromX = (clientX) => {
+      const r = root.getBoundingClientRect();
+      let p = (clientX - r.left) / (r.width || 1);
+      p = Math.max(0, Math.min(1, p));
+      return Math.round(o.min + p * (o.max - o.min));
+    };
+    const render = () => {
+      const p = (value - o.min) / ((o.max - o.min) || 1);
+      fill.style.width = (p * 100) + '%';
+      thumb.style.left = (p * 100) + '%';
+      if (valEl) valEl.textContent = value + (o.suffix || '');
+      root.setAttribute('aria-valuenow', String(value));
+    };
+
+    root.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      try { root.setPointerCapture(e.pointerId); } catch (_) {}
+      value = valFromX(e.clientX); render(); post(value);
+      self.armAutoHide();
+      e.preventDefault();
+    });
+    root.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      value = valFromX(e.clientX); render(); post(value);
+      self.armAutoHide();
+    });
+    const end = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { root.releasePointerCapture(e.pointerId); } catch (_) {}
+      self.postCtl(o.path, { value: value }); // immediate final commit
+      self.armAutoHide();
+    };
+    root.addEventListener('pointerup', end);
+    root.addEventListener('pointercancel', end);
+
+    return {
+      set: (v) => { value = Math.max(o.min, Math.min(o.max, Math.round(v))); render(); },
+      get: () => value
+    };
+  }
+
+  // --- open / close ---
+  async openPanel() {
+    if (this.isOpen) return;
+    this.isOpen = true;
+    this.backdrop.hidden = false;
+    // next frame so the transition runs from the off-screen start
+    requestAnimationFrame(() => {
+      this.panel.classList.add('cp-visible');
+      this.backdrop.classList.add('cp-visible');
+    });
+    this.panel.setAttribute('aria-hidden', 'false');
+    this.handle.classList.add('cp-hidden');
+    this.handle.setAttribute('aria-expanded', 'true');
+    this.armAutoHide();
+
+    const st = await this.getState();
+    if (st) {
+      if (typeof st.brightness === 'number') this.bright.set(st.brightness);
+      if (typeof st.volume === 'number') this.vol.set(st.volume);
+      if (st.listening) this.ptt.classList.add('cp-on');
+      else if (!this.pttActive) this.ptt.classList.remove('cp-on');
+    }
+  }
+
+  closePanel() {
+    if (!this.isOpen) return;
+    this.isOpen = false;
+    if (this.pttActive) this.endPTT(null); // release a held PTT on dismiss
+    this.panel.classList.remove('cp-visible');
+    this.backdrop.classList.remove('cp-visible');
+    this.panel.setAttribute('aria-hidden', 'true');
+    this.handle.classList.remove('cp-hidden');
+    this.handle.setAttribute('aria-expanded', 'false');
+    if (this.autoHideTimer) { clearTimeout(this.autoHideTimer); this.autoHideTimer = null; }
+    const bd = this.backdrop;
+    setTimeout(() => { if (!this.isOpen) bd.hidden = true; }, this.reduceMotion ? 0 : 320);
+  }
+
+  armAutoHide() {
+    if (!this.isOpen) return;
+    if (this.autoHideTimer) clearTimeout(this.autoHideTimer);
+    this.autoHideTimer = setTimeout(() => {
+      if (this.isOpen && !this.pttActive) this.closePanel();
+    }, this.autoHideMs);
+  }
+
+  // --- opener: tap OR swipe-up on the handle ---
+  bindOpener() {
+    let startY = 0, pid = null, swiped = false;
+    this.handle.addEventListener('pointerdown', (e) => {
+      pid = e.pointerId; startY = e.clientY; swiped = false;
+      try { this.handle.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    this.handle.addEventListener('pointermove', (e) => {
+      if (pid == null) return;
+      if (startY - e.clientY > 24) { swiped = true; pid = null; this.openPanel(); }
+    });
+    this.handle.addEventListener('pointerup', (e) => {
+      if (pid == null) return;       // already opened via swipe
+      pid = null;
+      if (!swiped) this.openPanel();  // plain tap
+    });
+    this.handle.addEventListener('pointercancel', () => { pid = null; });
+  }
+
+  // --- dismiss: tap-away, close button, Escape; keep alive on interaction ---
+  bindDismiss() {
+    this.backdrop.addEventListener('pointerdown', () => this.closePanel());
+    this.closeBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.closePanel(); });
+    this.panel.addEventListener('pointerdown', () => this.armAutoHide());
+    this.panel.addEventListener('pointermove', () => this.armAutoHide());
+    try {
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closePanel(); });
+    } catch (_) {}
+  }
+
+  // --- Push-to-Talk: press & hold ---
+  bindPTT() {
+    const start = (e) => {
+      if (this.pttActive) return;
+      this.pttActive = true;
+      try { this.ptt.setPointerCapture(e.pointerId); } catch (_) {}
+      this.ptt.classList.add('cp-on');
+      this.postCtl('/control/ptt', { action: 'start' });
+      // optimistic face feedback: go listening, remembering her prior look so we
+      // can restore it on release (the backend PTT seam is inert for now).
+      try {
+        this.pttPrevState = (typeof window.getEmbodyState === 'function') ? window.getEmbodyState() : null;
+        if (window.setEmbodyState) window.setEmbodyState('listening');
+      } catch (_) {}
+      this.armAutoHide();
+      e.preventDefault();
+    };
+    const stop = (e) => this.endPTT(e);
+    this.ptt.addEventListener('pointerdown', start);
+    this.ptt.addEventListener('pointerup', stop);
+    this.ptt.addEventListener('pointercancel', stop);
+    this.ptt.addEventListener('pointerleave', (e) => { if (this.pttActive) this.endPTT(e); });
+  }
+
+  endPTT(e) {
+    if (!this.pttActive) return;
+    this.pttActive = false;
+    if (e) { try { this.ptt.releasePointerCapture(e.pointerId); } catch (_) {} }
+    this.ptt.classList.remove('cp-on');
+    this.postCtl('/control/ptt', { action: 'stop' });
+    try {
+      if (window.setEmbodyState && this.pttPrevState) window.setEmbodyState(this.pttPrevState);
+    } catch (_) {}
+    this.pttPrevState = null;
+    this.armAutoHide();
+  }
+
+  // --- tap-ripple: visible confirmation that the touch reached Chromium ---
+  bindRipple() {
+    if (this.reduceMotion || !this.rippleLayer) return;
+    document.addEventListener('pointerdown', (e) => {
+      const r = document.createElement('span');
+      r.className = 'cp-ripple';
+      r.style.left = e.clientX + 'px';
+      r.style.top = e.clientY + 'px';
+      this.rippleLayer.appendChild(r);
+      setTimeout(() => { if (r.parentNode) r.parentNode.removeChild(r); }, 650);
+    }, true); // capture phase -> fires even if a target stops propagation
+  }
+}
+
+// Instantiate the control panel once the DOM is ready (separate from the face
+// controller so it can never interfere with the animation loop).
+window.addEventListener('DOMContentLoaded', () => {
+  window.controlPanel = new ControlPanel();
+});

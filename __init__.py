@@ -25,9 +25,11 @@ from __future__ import annotations
 
 from . import backends as _backends
 from .core import config as _config
+from .core import controls as _controls
 from .core import mood as _mood
 from .core import state as _state
 from .core import voice as _voice
+from .core import voice_input as _voice_input
 
 
 # Map known tool names -> friendly activity labels shown on the face wordmark
@@ -99,6 +101,8 @@ def register(ctx) -> None:
     backends = _backends.get_active_backends(cfg)   # auto-detected state backends (LEDs/null/...)
     _state.configure(cfg, backends)
     _voice.configure(cfg)
+    _voice_input.configure(cfg)                     # PTT voice INPUT (record->STT->webhook inject)
+    _controls.set_ptt_callback(_voice_input.on_ptt) # /control/ptt start/stop -> record/transcribe/inject
     _state.start_server()                           # daemon thread: face + /events + /config
 
     ctx.register_hook("on_session_start", _on_session_start)

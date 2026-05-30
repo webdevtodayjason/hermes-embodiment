@@ -39,6 +39,19 @@ DEFAULTS = {
         "backend": "auto",         # auto | pipewire | alsa | hermes-default | off
         "device": "",              # "" => system default sink
     },
+    "voice_input": {
+        "enabled": False,          # opt-in: needs the ~/.embody-stt venv + a mic + the webhook platform
+        "max_seconds": 30,         # hard cap so a stuck PTT can't record forever
+        "stt_venv": "~/.embody-stt",  # isolated faster-whisper venv (run by SUBPROCESS, never imported)
+        "stt_model": "base",       # whisper model cached in the venv
+        "mic_source": "",          # "" => default PipeWire source (Samson Go Mic)
+        "webhook": {               # where to POST the transcript (the gateway webhook platform)
+            "host": "127.0.0.1",
+            "port": 8644,
+            "route": "voice",
+            "secret": "",          # HMAC secret; MUST match platforms.webhook route secret
+        },
+    },
     "face": {
         "enabled": True,
         "host": "127.0.0.1",

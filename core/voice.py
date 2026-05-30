@@ -53,6 +53,22 @@ _VOL_GAIN = 1.8            # light perceptual boost so quiet speech still moves 
 _cfg: dict = {}
 
 
+# --- barge-in: track the in-progress playback so interrupt() can cancel it ----
+class _PlayCtx:
+    """Handle to ONE in-progress speak: a cancel flag + the live player/response,
+    so a PTT barge-in can stop her mid-sentence."""
+    __slots__ = ("cancel", "player", "response")
+
+    def __init__(self):
+        self.cancel = threading.Event()
+        self.player = None       # the paplay/aplay Popen currently playing
+        self.response = None     # the streaming requests.Response (closed on cancel)
+
+
+_play_lock = threading.Lock()
+_active_ctx: "_PlayCtx | None" = None   # the current playback, or None when idle
+
+
 def configure(cfg: dict) -> None:
     """Install the loaded config (provides voice.* and audio.* settings)."""
     global _cfg
@@ -71,10 +87,76 @@ def speak_async(text, on_start=None, on_done=None):
     return t
 
 
+def interrupt() -> None:
+    """Barge-in: stop any in-progress speech NOW — kill the player, abort the
+    streaming worker (cancel flag + close the HTTP stream), and close the mouth
+    (``broadcast_volume(0)``). Idempotent and safe when nothing is playing; never
+    raises. Fired on a new PTT press so the user can jump in over her."""
+    global _active_ctx
+    with _play_lock:
+        ctx = _active_ctx
+        _active_ctx = None
+    try:
+        if ctx is not None:
+            ctx.cancel.set()               # streaming loop + fallback both bail out
+            _close_response(ctx.response)  # unblock a worker parked on iter_content
+            _kill_player(ctx.player)       # SIGTERM -> SIGKILL the audio player
+    except Exception:  # noqa: BLE001 — interrupt must never raise.
+        pass
+    finally:
+        _reset_volume()                    # mouth closes whether or not anything played
+
+
+stop_speaking = interrupt   # alias
+
+
+def _set_active(ctx: "_PlayCtx") -> None:
+    global _active_ctx
+    with _play_lock:
+        _active_ctx = ctx
+
+
+def _clear_active(ctx: "_PlayCtx") -> None:
+    global _active_ctx
+    with _play_lock:
+        if _active_ctx is ctx:             # don't clobber a newer playback
+            _active_ctx = None
+
+
+def _kill_player(proc) -> None:
+    """SIGTERM then SIGKILL a player Popen. Best-effort; never raises."""
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1.5)
+            except Exception:
+                proc.kill()
+                try:
+                    proc.wait(timeout=1.5)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _close_response(resp) -> None:
+    if resp is None:
+        return
+    try:
+        resp.close()
+    except Exception:
+        pass
+
+
 # --------------------------------------------------------------------------- #
 # Worker
 # --------------------------------------------------------------------------- #
 def _speak_worker(text, on_start, on_done):
+    ctx = _PlayCtx()
+    _set_active(ctx)
     try:
         voice_cfg = _cfg.get("voice", {}) if isinstance(_cfg, dict) else {}
         if voice_cfg.get("enabled", True) is False:
@@ -85,26 +167,34 @@ def _speak_worker(text, on_start, on_done):
             return
 
         # 1) try streaming (fast first-audio + live mouth). True => audio played.
-        if _stream_enabled(voice_cfg) and _stream_speak(clean, voice_cfg, on_start):
+        if _stream_enabled(voice_cfg) and _stream_speak(clean, voice_cfg, on_start, ctx):
+            return
+
+        # interrupted during streaming setup -> do NOT fall back (would re-speak)
+        if ctx.cancel.is_set():
             return
 
         # 2) fallback: synth the whole file, then play (any provider).
-        _full_synth_and_play(clean, voice_cfg, on_start)
+        _full_synth_and_play(clean, voice_cfg, on_start, ctx)
     except Exception as exc:  # never crash the hook
         _warn(f"speak failed: {exc}")
     finally:
+        _clear_active(ctx)
         _reset_volume()                    # mouth closes even on failure
-        if on_done:
-            _safe_call(on_done)            # always return to idle
+        # On a barge-in, the PTT flow owns the next state (listening/thinking) —
+        # don't stomp it back to idle. A normal end still resets via on_done.
+        if on_done and not ctx.cancel.is_set():
+            _safe_call(on_done)
 
 
 # --------------------------------------------------------------------------- #
 # Streaming path (ElevenLabs /stream -> paplay --raw, + live volume)
 # --------------------------------------------------------------------------- #
-def _stream_speak(text, voice_cfg, on_start) -> bool:
+def _stream_speak(text, voice_cfg, on_start, ctx) -> bool:
     """Stream ElevenLabs audio progressively to the speaker. Returns True iff any
     audio was actually played (so the caller skips the full-synth fallback).
-    Best-effort; never raises."""
+    Registers its player + response on ``ctx`` and honors ``ctx.cancel`` so a PTT
+    barge-in stops it mid-stream. Best-effort; never raises."""
     api_key = _eleven_api_key()
     if not api_key:
         return False
@@ -130,15 +220,21 @@ def _stream_speak(text, voice_cfg, on_start) -> bool:
     player = None
     try:
         resp = _post_stream(url, params, headers, body)
+        ctx.response = resp                      # so interrupt() can close the stream
         status = getattr(resp, "status_code", 0)
         if status != 200:
             _warn(f"stream HTTP {status}: {str(getattr(resp, 'text', ''))[:200]}")
             return False
+        if ctx.cancel.is_set():                  # barged in during the request
+            return False
         player = _spawn_player(sample_rate)
         if player is None or player.stdin is None:
             return False
+        ctx.player = player                      # so interrupt() can kill the player
 
         for chunk in resp.iter_content(chunk_size=_STREAM_CHUNK):
+            if ctx.cancel.is_set():
+                break                            # PTT barge-in -> stop NOW
             if not chunk:
                 continue
             if not played:
@@ -148,7 +244,7 @@ def _stream_speak(text, voice_cfg, on_start) -> bool:
             try:
                 player.stdin.write(chunk)
             except (BrokenPipeError, OSError):
-                break                            # player died -> stop feeding it
+                break                            # player died/killed -> stop feeding it
             _emit_volume(chunk, sample_rate)     # RMS -> {"volume": …} on /events
 
         try:
@@ -234,7 +330,7 @@ def _reset_volume() -> None:
 # --------------------------------------------------------------------------- #
 # Fallback path (original full-synth -> file -> audio backend)
 # --------------------------------------------------------------------------- #
-def _full_synth_and_play(clean, voice_cfg, on_start) -> None:
+def _full_synth_and_play(clean, voice_cfg, on_start, ctx) -> None:
     os.makedirs(TMP_DIR, exist_ok=True)
 
     # synth -> mp3 (lazy import: tools.tts_tool only resolves in the gateway)
@@ -246,12 +342,48 @@ def _full_synth_and_play(clean, voice_cfg, on_start) -> None:
         synth_kwargs["voice_id"] = voice_id
     text_to_speech_tool(**synth_kwargs)
 
-    # hand off to the audio backend (it converts mp3->wav + plays on the device)
-    from ..backends import audio       # lazy: package fully loaded by call time
+    if ctx.cancel.is_set():            # barged in during the (blocking) synth -> don't play
+        return
 
     if on_start:
         _safe_call(on_start)           # face/LEDs -> "speaking" right before audio
-    audio.play(MP3_PATH, _cfg)
+    _play_file_interruptible(MP3_PATH, ctx)
+
+
+def _play_file_interruptible(path: str, ctx) -> None:
+    """Play an mp3 file via an interruptible player Popen (registered on ``ctx`` so
+    interrupt() can kill it). Reuses the audio backend's format/device resolution;
+    falls back to the (blocking) ``audio.play`` for the hermes-default method.
+    Best-effort; never raises."""
+    from ..backends import audio       # lazy: package fully loaded by call time
+    try:
+        method = audio._method(_cfg)
+        if method == "off":
+            return
+        if method not in ("pipewire", "alsa"):
+            audio.play(path, _cfg)      # hermes-default: blocking, not interruptible (rare)
+            return
+        wav = audio._to_wav(path)
+        if wav is None:
+            audio.play(path, _cfg)      # conversion failed -> let the backend try
+            return
+        device = audio._device(_cfg)
+        if method == "pipewire":
+            cmd = ["paplay"] + (["--device=" + device] if device else []) + [wav]
+        else:
+            cmd = ["aplay", "-D", device or "default", wav]
+
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ctx.player = proc               # so interrupt() can kill the fallback player too
+        if ctx.cancel.is_set():
+            _kill_player(proc)
+            return
+        try:
+            proc.wait(timeout=_PLAY_TIMEOUT)
+        except Exception:
+            pass
+    except Exception as exc:  # noqa: BLE001 — fallback playback must never crash the hook.
+        _warn(f"fallback play failed: {exc}")
 
 
 # --------------------------------------------------------------------------- #

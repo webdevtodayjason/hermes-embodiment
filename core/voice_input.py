@@ -66,20 +66,34 @@ def configure(cfg: dict) -> None:
 
 def on_ptt(action: str) -> None:
     """PTT seam callback (registered via controls.set_ptt_callback). ``start`` on
-    press begins recording; ``stop`` on release ends it -> transcribe -> inject.
+    press barges in (stops any current speech) then begins recording; ``stop`` on
+    release ends it -> transcribe -> inject.
 
-    No-op unless ``voice_input.enabled`` is true. Never raises.
+    Barge-in fires on EVERY press, even when recording is disabled, so the mic
+    button always interrupts her. Recording itself is gated on
+    ``voice_input.enabled``. Never raises.
     """
     try:
+        action = str(action).strip().lower()
+        if action == "start":
+            _barge_in()              # ALWAYS stop her current speech on a mic press
         if not _opt("enabled", False):
             return
-        action = str(action).strip().lower()
         if action == "start":
             _start()
         elif action == "stop":
             _stop(reason="ptt")
     except Exception as exc:  # noqa: BLE001 — a PTT callback must never crash the request.
         _warn(f"on_ptt({action!r}) failed: {exc}")
+
+
+def _barge_in() -> None:
+    """Stop any in-progress TTS so the user can jump in. Best-effort; never raises."""
+    try:
+        from . import voice as _voice
+        _voice.interrupt()
+    except Exception:  # noqa: BLE001
+        logger.debug("barge-in interrupt failed (ignored).", exc_info=True)
 
 
 # --------------------------------------------------------------------------- #

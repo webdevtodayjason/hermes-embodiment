@@ -56,14 +56,18 @@ v1 — every state is a solid fill (animation is a v2 background-thread concern)
 
 MOOD vs STATE precedence on the strip
 -------------------------------------
-``on_state`` and ``on_mood`` both drive the *same* 18 LEDs last-write-wins. We do
-NOT blend or layer: ``on_mood`` sets the color **immediately**, and the next
-``on_state`` for an active phase overrides it. Because set_state() fires on every
-hook transition (thinking/working/speaking/…), the activity color dominates while
-the agent is busy; the **mood tint shows in the gaps between transitions** (and
-on idle), which is exactly when the persona's "feeling" should read. Mood
-brightness is *intrinsic* (sad dims, excited brightens) — unlike states, a
-per-mood base brightness wins over the global ``leds.brightness`` (see setup()).
+``on_state`` and ``on_mood`` drive the *same* 18 LEDs last-write-wins (no blend).
+The **resting state IS the mood**: ``on_state("idle")`` resolves the strip to the
+CURRENT mood's color (``_MOOD_COLORS[_current_mood]``, default ``neutral`` →
+``1E3A5F``), NOT a fixed idle color — so between turns the body persistently
+"reflects her mood", matching the face's emotional baseline. The activity states
+(thinking/working/speaking/listening) are TRANSIENT overlays: each flashes its own
+color while the agent is busy, then the return to ``idle`` settles the case back
+onto the mood. ``on_mood`` records the mood in ``_current_mood`` and tints
+immediately; core.state's decay timer fades mood→neutral after ``face.mood_hold``
+seconds, which now reads as an emotional afterglow on the body. Mood brightness is
+*intrinsic* (sad dims, excited brightens) — unlike states, a per-mood base
+brightness wins over the global ``leds.brightness`` (see setup()).
 """
 
 from __future__ import annotations
@@ -108,6 +112,13 @@ DEFAULT_MOOD_COLORS: dict[str, dict] = {
 # on_mood() lazily resolve from their cfg arg if setup() was never called.
 _STATE_COLORS: dict[str, dict] | None = None
 _MOOD_COLORS: dict[str, dict] | None = None
+
+# Last mood applied via on_mood() — the RESTING color for on_state("idle") so the
+# body persistently reflects her mood. Plain module global: a single string
+# assignment is GIL-atomic, and it is read OUTSIDE _set_rgb's (non-reentrant)
+# _lock, so it needs no extra guard. Defaults to "neutral" => 1E3A5F (≈ the prior
+# resting blue), so nothing regresses before any mood is set.
+_current_mood: str = "neutral"
 
 # Serialize hardware access so rapid calls from multiple threads produce a clean
 # last-write-wins on the strip instead of overlapping SPI transactions.
@@ -213,6 +224,12 @@ def setup(cfg: dict | None = None) -> None:
 def on_state(state: str, cfg: dict | None = None) -> None:
     """Set the LEDs to match ``state``. Best-effort; never raises.
 
+    The RESTING state is the mood: ``state == "idle"`` resolves to the CURRENT
+    mood's color (``_MOOD_COLORS[_current_mood]``, default neutral) so the body
+    persistently reflects her mood between turns instead of snapping to a fixed
+    idle color. The activity states (thinking/working/speaking/listening) are
+    transient overlays, driven by their own colors while the agent is busy.
+
     Unknown/unmapped states are silent no-ops (the strip keeps its last color).
     A host without a drivable strip is inert. Safe to call rapidly from any thread.
     """
@@ -221,13 +238,24 @@ def on_state(state: str, cfg: dict | None = None) -> None:
 
     table = _STATE_COLORS
     if table is None:
-        # setup() was never called — resolve from this call's cfg.
+        # setup() was never called — resolve from this call's cfg (fills moods too).
         try:
             setup(cfg)
         except Exception:  # noqa: BLE001 — config resolution must never crash the agent.
             logger.debug("led setup() failed (ignored).", exc_info=True)
             return
         table = _STATE_COLORS or {}
+
+    # Resting state -> settle on the CURRENT mood color (the persistent baseline),
+    # NOT the idle state color. _MOOD_COLORS is populated alongside _STATE_COLORS
+    # by setup(), so it is non-None here whenever the state table is.
+    if state == "idle":
+        moods = _MOOD_COLORS or {}
+        mood_params = moods.get(_current_mood) or moods.get("neutral")
+        if mood_params:
+            _set_rgb(mood_params["color"], mood_params["brightness"])
+            return
+        # mood table somehow empty -> fall through to the idle state color below.
 
     params = table.get(state)
     if not params:
@@ -236,14 +264,23 @@ def on_state(state: str, cfg: dict | None = None) -> None:
 
 
 def on_mood(mood: str, cfg: dict | None = None) -> None:
-    """Tint the LEDs to match an emotional ``mood``. Best-effort; never raises.
+    """Tint the LEDs to match an emotional ``mood`` AND record it as the resting
+    baseline. Best-effort; never raises.
 
-    Sets the strip color immediately; a later ``on_state`` for an active phase
-    overrides it (see the module docstring's mood-vs-state precedence note). An
-    unknown/unmapped mood falls back to the ``neutral`` tint rather than no-op'ing,
-    so the strip always reflects *some* defined mood. A host without a drivable
-    strip is inert. Safe to call rapidly from any thread.
+    First records ``mood`` in module-level ``_current_mood`` (coerced to one of the
+    nine known moods; ``neutral`` on anything else) so a later ``on_state("idle")``
+    settles the body back onto it — this is what makes the case *rest* on her mood
+    rather than the idle color (see the module precedence note). The mood is
+    recorded even on an inert host, so a strip that later becomes drivable still
+    reflects the last mood. Then tints the strip immediately. An unknown/unmapped
+    mood falls back to the ``neutral`` tint. Safe to call rapidly from any thread.
     """
+    global _current_mood
+    # Record FIRST (top of on_mood, per the resting-mood contract). A single string
+    # assignment is GIL-atomic and read outside _set_rgb's non-reentrant _lock, so
+    # no extra guard is needed. neutral-fallback coercion against the known 9 moods.
+    _current_mood = mood if mood in DEFAULT_MOOD_COLORS else "neutral"
+
     if not is_available():
         return
 
@@ -257,7 +294,7 @@ def on_mood(mood: str, cfg: dict | None = None) -> None:
             return
         table = _MOOD_COLORS or {}
 
-    params = table.get(mood) or table.get("neutral")
+    params = table.get(_current_mood) or table.get("neutral")
     if not params:
         return  # no mapping at all -> no-op (leave strip as-is)
     _set_rgb(params["color"], params["brightness"])

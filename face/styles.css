@@ -889,6 +889,57 @@ body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; botto
   50% { opacity: 1; }
 }
 
+/* Standalone hold-to-talk MIC button — bottom-LEFT, always visible. Round,
+   semi-transparent so it doesn't obscure her; neon mic glyph; finger-sized.
+   Conflict-free: panel handle is bottom-center, touch zones are upper/mid-face. */
+.cp-mic {
+  position: fixed;
+  left: 22px;
+  bottom: 22px;
+  z-index: 42;             /* above the face/zones; below panel(50)/modal(70) */
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 8, 20, 0.45);   /* translucent dark */
+  border: 1.5px solid rgba(0, 240, 255, 0.45);
+  color: var(--neon-cyan);
+  cursor: pointer;
+  outline: none;
+  touch-action: none;       /* pointer-driven hold; don't let the browser scroll */
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), 0 0 12px rgba(0, 240, 255, 0.18);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+.cp-mic:hover { background: rgba(8, 8, 20, 0.6); }
+.cp-mic-glyph { width: 34px; height: 34px; filter: drop-shadow(0 0 4px rgba(0, 240, 255, 0.5)); }
+
+/* Recording feedback: solid-cyan glow + pulsing ring while held. */
+.cp-mic.cp-on {
+  background: rgba(0, 240, 255, 0.2);
+  border-color: var(--neon-cyan);
+  color: #ffffff;
+  box-shadow: 0 0 26px rgba(0, 240, 255, 0.6), inset 0 0 16px rgba(0, 240, 255, 0.22);
+  transform: scale(0.96);
+}
+.cp-mic.cp-on .cp-mic-glyph { filter: drop-shadow(0 0 8px rgba(0, 240, 255, 0.9)); }
+.cp-mic.cp-on::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 240, 255, 0.6);
+  animation: cpMicPulse 1.1s ease-out infinite;
+}
+@keyframes cpMicPulse {
+  0%   { transform: scale(0.92); opacity: 0.9; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
 /* Transient toast — brief, dismissible message (e.g. shutdown failure). Sits
    above everything; tap to dismiss. Never blocks the UI (auto-hides). */
 .cp-toast {

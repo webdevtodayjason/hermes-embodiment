@@ -566,6 +566,21 @@
     </div>
   </div>
 
+  <!-- Standalone hold-to-talk MIC button (bottom-left) — always-visible quick
+       access to the SAME PTT mechanism as the panel's PTT button. Press & hold
+       to talk; no panel needed. Pointer events (touch + mouse). -->
+  <button id="cp-mic" class="cp-mic" type="button" aria-label="Hold to talk">
+    <svg class="cp-mic-glyph" viewBox="0 0 24 24" aria-hidden="true">
+      <!-- mic capsule -->
+      <rect x="9" y="2.5" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <!-- cradle -->
+      <path d="M6 11 a6 6 0 0 0 12 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <!-- stand -->
+      <line x1="12" y1="17" x2="12" y2="20.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="8.5" y1="20.5" x2="15.5" y2="20.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  </button>
+
   <!-- Transient toast (e.g. "Shutdown failed — try again"). Dismissible. -->
   <div id="cp-toast" class="cp-toast" role="status" aria-live="polite" aria-hidden="true" hidden></div>
 

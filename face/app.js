@@ -2485,3 +2485,70 @@ class FaceTouch {
 window.addEventListener('DOMContentLoaded', () => {
   window.faceTouch = new FaceTouch();
 });
+
+// ==========================================================================
+// STANDALONE HOLD-TO-TALK MIC BUTTON  (bottom-left, always visible)
+// --------------------------------------------------------------------------
+// Quick-access push-to-talk using the SAME mechanism as the panel's PTT button
+// (POST /control/ptt {start|stop} + optimistic listening feedback) — no panel
+// needed. Isolated from the panel/face loops; pointer events => touch + mouse.
+// ==========================================================================
+class MicButton {
+  constructor() {
+    this.btn = document.getElementById('cp-mic');
+    if (!this.btn) return; // markup absent -> inert
+    this.active = false;
+    this.prevState = null;
+    this.bind();
+  }
+
+  async post(action) {
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 1500);
+      await fetch('/control/ptt', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }), cache: 'no-store', signal: c.signal
+      });
+      clearTimeout(t);
+    } catch (e) { /* offline / no server — best-effort, like the panel PTT */ }
+  }
+
+  start(e) {
+    if (this.active) return;
+    this.active = true;
+    try { this.btn.setPointerCapture(e.pointerId); } catch (_) {}
+    this.btn.classList.add('cp-on');
+    this.post('start');
+    // optimistic face feedback: go listening, remember prior look to restore.
+    try {
+      this.prevState = (typeof window.getEmbodyState === 'function') ? window.getEmbodyState() : null;
+      if (window.setEmbodyState) window.setEmbodyState('listening');
+    } catch (_) {}
+    e.preventDefault();
+    e.stopPropagation(); // don't let the press fall through to face touch-zones
+  }
+
+  stop(e) {
+    if (!this.active) return;
+    this.active = false;
+    if (e) { try { this.btn.releasePointerCapture(e.pointerId); } catch (_) {} }
+    this.btn.classList.remove('cp-on');
+    this.post('stop');
+    try {
+      if (window.setEmbodyState && this.prevState) window.setEmbodyState(this.prevState);
+    } catch (_) {}
+    this.prevState = null;
+  }
+
+  bind() {
+    this.btn.addEventListener('pointerdown', (e) => this.start(e));
+    this.btn.addEventListener('pointerup', (e) => this.stop(e));
+    this.btn.addEventListener('pointercancel', (e) => this.stop(e));
+    this.btn.addEventListener('pointerleave', (e) => { if (this.active) this.stop(e); });
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  window.micButton = new MicButton();
+});

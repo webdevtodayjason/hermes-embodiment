@@ -205,9 +205,65 @@ const MOUTH_SHAPES = {
   }
 };
 
+// ==========================================================================
+// MOOD LAYER  (rides ON TOP of the activity STATE — they are orthogonal)
+// --------------------------------------------------------------------------
+// STATE = what she's DOING (idle/listening/thinking/speaking/working).
+// MOOD  = how she FEELS — the LOCKED 9-mood contract shared with core/mood.py
+//         and the LED MOOD_COLORS. Mood is an INDEPENDENT dimension: it drives
+//         the EMOTIONAL baseline (eyebrows, eye shape, pupils, mouth shape,
+//         particle theme, accent glow + a one-shot spring impulse), while STATE
+//         keeps driving the activity overlay + the speaking mouth's VOLUME.
+//         Unknown/empty mood -> neutral, never an error.
+// These reuse the EXISTING Antigravity expression tables (SVG_PATHS /
+// MOUTH_SHAPES / the applyStateVisuals branches) — no new art, no animations.
+// ==========================================================================
+const MOODS = ['neutral', 'happy', 'excited', 'loving', 'playful', 'curious', 'sad', 'surprised', 'concerned'];
+const DEFAULT_MOOD = 'neutral';
+
+// Each contract mood -> the EXISTING expression whose tables it borrows (`expr`,
+// one of the STATES looks; 'idle' = her native neutral look), plus light tuning
+// the borrowed look doesn't already carry. `accent` echoes the LED mood color
+// (deliverable #5 — shifts her neon hue, keeps the gradient glasses/irises so
+// she's still HER). `impulse` is a one-shot spring kick on mood change; `shock`
+// fires the radial particle blast (surprised).
+//
+// ACCENT HUES are synced to mood-core's LED palette (DEFAULT_MOOD_COLORS) so her
+// face glow ≈ the case-LED hue per mood ("one being" parity). Raw LED hex is used
+// verbatim EXCEPT two readability nudges (per team-lead):
+//   • neutral: LED 1E3A5F (dark navy) washes out at the faint 0.08 aura alpha,
+//     so neutral keeps her NATIVE purple-ish idle glow (also what the features
+//     restore to) — recognizably HER.
+//   • surprised: LED EAEAEA (near-white) glows as a colorless wash and loses the
+//     mood signal -> nudged to a readable COOL ICY tint (#CFE8FF), same family.
+const MOOD_MAP = {
+  neutral:   { expr: 'idle',        accent: '#bd00ff' },                           // native idle (LED navy 1E3A5F too dark to glow)
+  happy:     { expr: 'happy',       accent: '#ffc107', eyeScale: 1.05, pupilScale: 1.05 }, // LED FFC107
+  excited:   { expr: 'happy',       accent: '#ff6d00', eyeScale: 1.22, pupilScale: 1.20, impulse: { nod: -18, glasses: -0.14 } }, // LED FF6D00
+  loving:    { expr: 'loving',      accent: '#ff2d78' },                           // LED FF2D78
+  playful:   { expr: 'silly',       accent: '#00e5ff', impulse: { tilt: 9 } },     // LED 00E5FF
+  curious:   { expr: 'thinking',    accent: '#7c4dff', impulse: { tilt: 7 } },     // LED 7C4DFF
+  sad:       { expr: 'sad',         accent: '#2962ff' },                           // LED 2962FF
+  surprised: { expr: 'shocked',     accent: '#cfe8ff', impulse: { nod: -30, glasses: -0.24 }, shock: true }, // LED EAEAEA -> cool icy tint
+  concerned: { expr: 'sad',         accent: '#ff7043', pupilScale: 0.95 }          // LED FF7043
+};
+
+// Moods that bring their OWN particle theme/motion (overrides the state's
+// activity particles). Moods ABSENT here let the STATE's activity particles
+// show through — so e.g. "speaking + happy" still pulses, while "speaking +
+// loving" rises hearts. Values are existing particle-state names.
+const MOOD_PARTICLE = {
+  loving: 'loving',     // rising hearts
+  sad: 'sad',           // falling teardrops
+  playful: 'silly',     // floating bubbles
+  curious: 'thinking'   // orbiting data digits
+};
+
 class MinnieController {
   constructor() {
     this.currentState = STATES.IDLE;
+    this.currentMood = DEFAULT_MOOD; // emotional dimension, INDEPENDENT of state
+    this.reduceMotion = false;       // set in init() from prefers-reduced-motion
     this.volume = 0.0;
     this.smoothedVol = 0.0; // low-passed volume that drives the mouth (anti-flicker)
     
@@ -325,6 +381,14 @@ class MinnieController {
       }
     } catch (e) {}
 
+    // Honor prefers-reduced-motion: skip the one-shot mood spring impulses (the
+    // CSS already calms transitions/keyframes; the ambient rAF physics stay per
+    // the byte-for-byte directive).
+    try {
+      this.reduceMotion = !!(window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { this.reduceMotion = false; }
+
     this.setupOffscreenCanvases();
     this.setupCanvasSize();
     window.addEventListener('resize', () => this.setupCanvasSize());
@@ -340,6 +404,12 @@ class MinnieController {
     try {
       const forced = new URLSearchParams(location.search).get('state');
       if (forced) this.transitionToState(EMBODY_STATE_MAP[forced] || forced);
+    } catch (e) {}
+
+    // Offline dev preview: ?mood=loving (independent of ?state). Unknown -> neutral.
+    try {
+      const forcedMood = new URLSearchParams(location.search).get('mood');
+      if (forcedMood !== null) this.setMood(forcedMood);
     } catch (e) {}
 
     // Live wiring to the embody plugin's state server.
@@ -554,18 +624,22 @@ class MinnieController {
     const cx = this.faceCx;
     const cy = this.faceCy;
     
-    // State conditions
-    const isAlert = this.currentState === STATES.ALERT;
-    const isThinking = this.currentState === STATES.THINKING;
-    const isListening = this.currentState === STATES.LISTENING;
-    const isSpeaking = this.currentState === STATES.SPEAKING;
-    const isSleeping = this.currentState === STATES.SLEEPING;
-    const isSad = this.currentState === STATES.SAD;
-    const isLoving = this.currentState === STATES.LOVING;
-    const isAngry = this.currentState === STATES.ANGRY || this.currentState === STATES.MAD;
-    const isShocked = this.currentState === STATES.SHOCKED;
-    const isGoofy = this.currentState === STATES.GOOFY;
-    const isSilly = this.currentState === STATES.SILLY;
+    // Particle theme/motion follows particleExpr(): a mood's signature theme when
+    // it has one (hearts/tears/bubbles/orbit), else the activity state — so the
+    // speaking/listening auras still play under non-signature moods. At
+    // mood=neutral this === currentState, i.e. unchanged from before.
+    const pexpr = this.particleExpr();
+    const isAlert = pexpr === STATES.ALERT;
+    const isThinking = pexpr === STATES.THINKING;
+    const isListening = pexpr === STATES.LISTENING;
+    const isSpeaking = pexpr === STATES.SPEAKING;
+    const isSleeping = pexpr === STATES.SLEEPING;
+    const isSad = pexpr === STATES.SAD;
+    const isLoving = pexpr === STATES.LOVING;
+    const isAngry = pexpr === STATES.ANGRY || pexpr === STATES.MAD;
+    const isShocked = pexpr === STATES.SHOCKED;
+    const isGoofy = pexpr === STATES.GOOFY;
+    const isSilly = pexpr === STATES.SILLY;
 
     for (let i = 0; i < this.particles.length; i++) {
       const p = this.particles[i];
@@ -766,7 +840,7 @@ class MinnieController {
 
     this.es.onmessage = (event) => {
       if (!event || !event.data) return;
-      let raw, status = '';
+      let raw, status = '', moodPresent = false, moodVal = null;
       try {
         const data = JSON.parse(event.data);
         raw = (typeof data.state === 'string') ? data.state.toLowerCase() : null;
@@ -774,9 +848,19 @@ class MinnieController {
         if (data.volume !== undefined && data.volume !== null) {
           this.setVolume(parseFloat(data.volume));
         }
+        // MOOD layer: independent of state. Apply ONLY when the field is present
+        // (old frames omit `mood` -> leave the current mood untouched). Empty or
+        // unknown -> neutral inside setMood. The connect-sync snapshot frame
+        // carries mood too, so it lands here as well.
+        if (Object.prototype.hasOwnProperty.call(data, 'mood')) {
+          moodPresent = true;
+          moodVal = data.mood;
+        }
       } catch (err) {
         raw = String(event.data).trim().toLowerCase(); // tolerate a bare token
       }
+      // Mood is orthogonal to state — apply it even on a mood-only frame.
+      if (moodPresent) this.setMood(moodVal);
       if (!raw) return;
       this.transitionToState(EMBODY_STATE_MAP[raw] || raw);
       // wordmark uses the RAW embody state (so 'working' reads "working…")
@@ -914,22 +998,29 @@ class MinnieController {
   }
 
   applyStateVisuals() {
-    const isAlert = this.currentState === STATES.ALERT;
-    const isSleeping = this.currentState === STATES.SLEEPING;
-    const isThinking = this.currentState === STATES.THINKING;
-    const isListening = this.currentState === STATES.LISTENING;
-    const isSad = this.currentState === STATES.SAD;
-    const isLoving = this.currentState === STATES.LOVING;
-    const isAngry = this.currentState === STATES.ANGRY || this.currentState === STATES.MAD;
-    const isShocked = this.currentState === STATES.SHOCKED;
-    const isGoofy = this.currentState === STATES.GOOFY;
-    const isSilly = this.currentState === STATES.SILLY;
+    // Render the EMOTIONAL baseline by the EFFECTIVE expression: the active
+    // mood's mapped look when a mood is set, else the raw activity state. With
+    // mood=neutral, effExpr() === currentState, so this is byte-identical to the
+    // pre-mood behavior. STATE still owns the activity overlay (particles motion,
+    // speaking-mouth volume, timers, breathing/hover) — see particleExpr()/loop.
+    const expr = this.effExpr();
+    const isAlert = expr === STATES.ALERT;
+    const isSleeping = expr === STATES.SLEEPING;
+    const isThinking = expr === STATES.THINKING;
+    const isListening = expr === STATES.LISTENING;
+    const isSad = expr === STATES.SAD;
+    const isLoving = expr === STATES.LOVING;
+    const isAngry = expr === STATES.ANGRY || expr === STATES.MAD;
+    const isShocked = expr === STATES.SHOCKED;
+    const isGoofy = expr === STATES.GOOFY;
+    const isSilly = expr === STATES.SILLY;
 
-    // Apply path shapes for Eyebrows & Mouth
-    const eyebrowState = this.currentState;
-    this.leftEyebrow.setAttribute('d', SVG_PATHS.eyebrows[eyebrowState].left);
-    this.rightEyebrow.setAttribute('d', SVG_PATHS.eyebrows[eyebrowState].right);
-    this.mouth.setAttribute('d', MOUTH_SHAPES[this.currentState].open(this.volume));
+    // Apply path shapes for Eyebrows & Mouth (guarded: unknown -> idle)
+    const eyebrows = SVG_PATHS.eyebrows[expr] || SVG_PATHS.eyebrows.idle;
+    const mouthShape = MOUTH_SHAPES[expr] || MOUTH_SHAPES.idle;
+    this.leftEyebrow.setAttribute('d', eyebrows.left);
+    this.rightEyebrow.setAttribute('d', eyebrows.right);
+    this.mouth.setAttribute('d', mouthShape.open(this.volume));
 
     // Reset default pupil scale properties
     this.pupils.left.targetScale = 1.0;
@@ -1016,7 +1107,7 @@ class MinnieController {
       this.rightEyelashWing.setAttribute('filter', 'url(#neon-glow-red)');
 
       // Furrowed narrowed eyes
-      const isMad = this.currentState === STATES.MAD;
+      const isMad = this.effExpr() === STATES.MAD;
       const eyeNarrow = isMad ? 0.52 : 0.68;
       const rot = isMad ? 7 : 5;
       this.leftEye.style.transform = `scaleY(${eyeNarrow}) rotate(${rot}deg)`;
@@ -1253,16 +1344,128 @@ class MinnieController {
 
     // Set target pupil offsets
     this.updateTargetPupilDirection();
+
+    // Overlay the mood accent hue + contained eye/pupil tuning (no-op at neutral)
+    this.applyMoodAccentAndOverrides();
   }
 
-  // Update target pupil look vectors based on states
+  // --- Mood layer helpers ---------------------------------------------------
+
+  // The expression that drives the EMOTIONAL render: the active mood's mapped
+  // look, or the raw activity state when mood is neutral (-> zero regression).
+  effExpr() {
+    if (this.currentMood && this.currentMood !== DEFAULT_MOOD) {
+      const desc = MOOD_MAP[this.currentMood];
+      if (desc && desc.expr) return desc.expr;
+    }
+    return this.currentState;
+  }
+
+  // The state that drives the PARTICLE theme/motion: a mood-specific theme when
+  // the mood defines one (hearts/tears/bubbles/orbit), else the activity state
+  // (so speaking/listening/thinking auras still show through under moods that
+  // have no signature particle, e.g. happy/surprised/concerned/neutral).
+  particleExpr() {
+    return MOOD_PARTICLE[this.currentMood] || this.currentState;
+  }
+
+  // Set the emotional mood (INDEPENDENT of state). Unknown/empty -> neutral.
+  setMood(mood) {
+    const m = (typeof mood === 'string') ? mood.trim().toLowerCase() : '';
+    const next = MOODS.includes(m) ? m : DEFAULT_MOOD;
+    if (next === this.currentMood) return; // no change -> skip re-impulse/flicker
+
+    console.log(`Minnie mood: ${this.currentMood} -> ${next}`);
+    this.currentMood = next;
+
+    // Reflect on the debug mood buttons (if present in ?debug)
+    document.querySelectorAll('.mood-btn').forEach(b => b.classList.remove('active'));
+    const mb = document.getElementById(`mbtn-${next}`);
+    if (mb) mb.classList.add('active');
+
+    const desc = MOOD_MAP[next] || MOOD_MAP[DEFAULT_MOOD];
+
+    // One-shot expressive spring impulse (skipped under reduced motion).
+    if (!this.reduceMotion && desc.impulse) {
+      if (desc.impulse.nod != null) this.headSpring.nodVel = desc.impulse.nod;
+      if (desc.impulse.tilt != null) this.headSpring.tiltVel = desc.impulse.tilt;
+      if (desc.impulse.glasses != null) this.glassesSpring.velY = desc.impulse.glasses;
+    }
+    // Surprised: radial particle blast (mirrors the SHOCKED state shockwave).
+    if (!this.reduceMotion && desc.shock) {
+      const cx = this.faceCx, cy = this.faceCy;
+      this.particles.forEach(p => {
+        const dx = p.x - cx, dy = p.y - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        p.vx = (dx / dist) * (5 + Math.random() * 7);
+        p.vy = (dy / dist) * (5 + Math.random() * 7);
+      });
+    }
+
+    // Re-render the emotional baseline (eyebrows/eyes/pupils/mouth/colors) via
+    // effExpr() + the accent overlay. Particles pick up particleExpr() next frame.
+    this.applyStateVisuals();
+  }
+
+  // hex -> rgba() string (for the CSS --mood-glow accent, no color-mix needed).
+  rgba(hex, a) {
+    let h = String(hex).replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16) || 0;
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+  }
+
+  // Per-mood accent: shift her soft neon facial features (brows/eyelids/lashes/
+  // mouth) + the background aura to the mood hue, keeping the gradient glasses &
+  // cyan irises intact so she stays recognizably HER. No-op color at neutral.
+  applyMoodAccentAndOverrides() {
+    const mood = this.currentMood || DEFAULT_MOOD;
+    const desc = MOOD_MAP[mood] || MOOD_MAP[DEFAULT_MOOD];
+    const accent = desc.accent || '#bd00ff';
+
+    // Background aura glow echoes the LED mood color (neutral keeps the original).
+    try {
+      document.documentElement.style.setProperty(
+        '--mood-glow', this.rgba(accent, mood === DEFAULT_MOOD ? 0.08 : 0.12));
+    } catch (e) {}
+
+    if (mood === DEFAULT_MOOD) {
+      // Restore the mouth's native neon (the state branches don't set its stroke);
+      // brows/eyes/pupils are already correct from the state branch above.
+      this.mouth.setAttribute('stroke', '#bd00ff');
+      return;
+    }
+
+    // Glow color follows the element's own stroke/fill, so tinting these tints
+    // their neon halo too.
+    this.leftEyebrow.setAttribute('stroke', accent);
+    this.rightEyebrow.setAttribute('stroke', accent);
+    this.leftEyelidArch.setAttribute('stroke', accent);
+    this.rightEyelidArch.setAttribute('stroke', accent);
+    this.leftEyelashWing.setAttribute('fill', accent);
+    this.rightEyelashWing.setAttribute('fill', accent);
+    this.mouth.setAttribute('stroke', accent);
+
+    // Contained eye/pupil tuning the borrowed look doesn't already carry.
+    if (desc.eyeScale != null) {
+      this.leftEye.style.transform = `scale(${desc.eyeScale})`;
+      this.rightEye.style.transform = `scale(${desc.eyeScale})`;
+    }
+    if (desc.pupilScale != null) {
+      this.pupils.left.targetScale = desc.pupilScale;
+      this.pupils.right.targetScale = desc.pupilScale;
+    }
+  }
+
+  // Update target pupil look vectors based on the effective expression
   updateTargetPupilDirection() {
     if (this.isRollingEyes) return;
 
-    const isGoofy = this.currentState === STATES.GOOFY;
-    const isThinking = this.currentState === STATES.THINKING;
-    const isSad = this.currentState === STATES.SAD;
-    const isExasperated = this.currentState === STATES.EXASPERATED;
+    const expr = this.effExpr();
+    const isGoofy = expr === STATES.GOOFY;
+    const isThinking = expr === STATES.THINKING;
+    const isSad = expr === STATES.SAD;
+    const isExasperated = expr === STATES.EXASPERATED;
 
     if (isGoofy) {
       // Crossed eyes!
@@ -1637,7 +1840,9 @@ class MinnieController {
     //    instead of strobing. Works for the mock AND a real live TTS stream.
     const kVol = (this.volume > this.smoothedVol) ? 0.22 : 0.085;
     this.smoothedVol += (this.volume - this.smoothedVol) * kVol;
-    const mouthShape = MOUTH_SHAPES[this.currentState];
+    // Mouth SHAPE comes from the effective expression (so she speaks "happy" /
+    // "sad" / "loving"); openness is the smoothed VOLUME (state-driven, intact).
+    const mouthShape = MOUTH_SHAPES[this.effExpr()] || MOUTH_SHAPES[this.currentState];
     if (mouthShape) {
       const sv = this.smoothedVol;
       this.mouth.setAttribute('d', mouthShape.open(sv));
@@ -1673,13 +1878,21 @@ window.setVolume = function(volume) {
   }
 };
 
-// Embody-friendly aliases (the plugin/agent drives her through these), plus a
-// forward-compat mood seam that is intentionally a no-op for now.
+// Embody-friendly aliases (the plugin/agent drives her through these). The mood
+// seam is now LIVE: it drives the emotional layer on top of the activity state.
 window.setMinnieState = window.setState;
 window.setEmbodyState = window.setState;
-window.setMinnieMood = function() {};
-window.setEmbodyMood = function() {};
+window.setMinnieMood = function(mood) {
+  if (minnie) {
+    minnie.setMood(mood);
+  }
+};
+window.setEmbodyMood = window.setMinnieMood;
 
 function changeState(state) {
   window.setState(state);
+}
+
+function changeMood(mood) {
+  window.setEmbodyMood(mood);
 }

@@ -86,7 +86,9 @@ body::before {
   transform: translate(-50%, -50%);
   width: 600px;
   height: 600px;
-  background: radial-gradient(circle, rgba(189, 0, 255, 0.08) 0%, rgba(0, 240, 255, 0.03) 50%, rgba(0,0,0,0) 70%);
+  /* Inner stop is the per-mood accent (JS sets --mood-glow to an rgba echoing
+     the LED mood color); falls back to her native purple when mood=neutral. */
+  background: radial-gradient(circle, var(--mood-glow, rgba(189, 0, 255, 0.08)) 0%, rgba(0, 240, 255, 0.03) 50%, rgba(0,0,0,0) 70%);
   border-radius: 50%;
   pointer-events: none;
   z-index: 0;
@@ -275,6 +277,14 @@ body::before {
   border-top: none;
   padding-top: 3px;
 }
+
+/* Mood layer row (debug only) — sits below the state rows, lighter divider. */
+.panel-row-3 {
+  border-top: none;
+  padding-top: 3px;
+}
+.mood-btn.active { border-color: rgba(189, 0, 255, 0.3); background: rgba(189, 0, 255, 0.05); }
+.mood-btn.active .status-name { color: var(--neon-purple); text-shadow: 0 0 6px rgba(189, 0, 255, 0.4); }
 
 /* Individual status column items structured as buttons */
 .status-btn {

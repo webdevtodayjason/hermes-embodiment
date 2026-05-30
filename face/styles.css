@@ -222,6 +222,10 @@ body::before {
   text-align: center;
   margin-top: 5px;
   margin-bottom: 15px;
+  /* Decorative status label — must NOT intercept taps. In the hero view it sits
+     (z-index 11) above the face SVG and otherwise eats pokes aimed at her lower
+     face (cheeks), so face touch-reaction zones never fire there. */
+  pointer-events: none;
 }
 
 .brand-title {

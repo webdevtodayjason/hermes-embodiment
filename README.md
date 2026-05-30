@@ -2,6 +2,8 @@
 
 **Give your Hermes agent a body — an animated face, a living RGB presence, and mood, all driven by the agent's real state.**
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Built on Hermes Agent](https://img.shields.io/badge/Built%20on-Hermes%20Agent-7C3AED)](https://github.com/webdevtodayjason) [![Platform: Raspberry Pi 5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-C51A4A?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/) [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/webdevtodayjason/hermes-embodiment/pulls)
+
 ![Minnie — the animated cat-eye face on the Pironman kiosk](docs/minnie.png)
 
 ---
@@ -168,3 +170,13 @@ python3 -m http.server 8907
 ## License
 
 [MIT](LICENSE) © 2026 Jason Brashear (Titanium Computing).
+
+---
+
+<div align="center">
+
+**Built by [Jason Brashear](https://jasonbrashear.com) · Titanium Computing**
+
+🌐 [jasonbrashear.com](https://jasonbrashear.com)  ·  ✍️ [Substack](https://jasonbrashear.substack.com/)
+
+</div>

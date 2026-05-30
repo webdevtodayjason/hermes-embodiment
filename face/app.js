@@ -1407,6 +1407,57 @@ class MinnieController {
     this.applyStateVisuals();
   }
 
+  // --- Touch-reaction helpers (additive; reuse the existing spring/particle
+  //     systems). Called by FaceTouch on a face poke. Honor reduced motion via
+  //     the caller; these just apply a one-shot kick. ---
+
+  // One-shot spring impulse (nod/tilt/sway velocities + glasses squish kick).
+  reactImpulse({ nod = 0, tilt = 0, sway = 0, glasses = 0 } = {}) {
+    if (nod) this.headSpring.nodVel += nod;
+    if (tilt) this.headSpring.tiltVel += tilt;
+    if (sway) this.headSpring.swayVel += sway;
+    if (glasses) this.glassesSpring.velY += glasses;
+  }
+
+  // A deliberate blink (or a one-sided wink) using the existing CSS blink anim.
+  reactBlink(side) {
+    if (this.currentState === STATES.SLEEPING) return;
+    if (side === 'left' || side === 'right') {
+      const eye = side === 'left' ? this.leftEye : this.rightEye;
+      const cls = side === 'left' ? 'wink-left' : 'wink-right';
+      eye.classList.add(cls);
+      this.glassesSpring.velY += -0.09;
+      this.headSpring.tiltVel += (side === 'left' ? 1.6 : -1.6);
+      setTimeout(() => eye.classList.remove(cls), 160);
+    } else {
+      this.leftEye.classList.add('blink-active');
+      this.rightEye.classList.add('blink-active');
+      this.glassesSpring.velY += -0.16;
+      this.headSpring.nodVel += 1.8;
+      setTimeout(() => {
+        this.leftEye.classList.remove('blink-active');
+        this.rightEye.classList.remove('blink-active');
+      }, 150);
+    }
+  }
+
+  // A quick burst of rising heart sprites from near her cheeks (a "blush"),
+  // independent of the loving particle THEME so it works under any mood.
+  reactHeartBurst(side) {
+    if (!this.particles || !this.particles.length) return;
+    const cx = this.faceCx, cy = this.faceCy, s = this.faceScale || 0.5;
+    const ox = (side === 'left' ? -150 : side === 'right' ? 150 : 0) * s;
+    const n = Math.min(18, this.particles.length);
+    for (let i = 0; i < n; i++) {
+      const p = this.particles[i];
+      p.x = cx + ox + (Math.random() - 0.5) * 70 * s;
+      p.y = cy + 60 * s + (Math.random() - 0.5) * 30 * s;
+      p.vy = -0.6 - Math.random() * 0.8;
+      p.vx = (Math.random() - 0.5) * 0.5;
+      p.alpha = 0.9;
+    }
+  }
+
   // hex -> rgba() string (for the CSS --mood-glow accent, no color-mix needed).
   rgba(hex, a) {
     let h = String(hex).replace('#', '');
@@ -2168,4 +2219,148 @@ class ControlPanel {
 // controller so it can never interfere with the animation loop).
 window.addEventListener('DOMContentLoaded', () => {
   window.controlPanel = new ControlPanel();
+});
+
+// ==========================================================================
+// FACE TOUCH REACTIONS  (poke her face -> she reacts)
+// --------------------------------------------------------------------------
+// Invisible SVG hit-zones over her face (see #face-touch-zones in index.html).
+// Each poke does BOTH, for a snappy local feel + full-being sync:
+//   1. OPTIMISTIC LOCAL: setEmbodyMood(reactionMood) + a one-shot spring impulse
+//      (and a wink/heart where it fits) — instant, no network wait.
+//   2. POST /control/mood {value:<mood>, ttl:3} so the case LEDs + other surfaces
+//      react too; mood-core decays it back to the prior/neutral mood after ~3s.
+// This is an ADDITIVE input layer — it only calls the public window.setEmbody*
+// seam + MinnieController react* helpers; it never touches the rAF/mood/SSE loop
+// or the control panel. Reactions are SUPPRESSED while the panel is open, and the
+// zones live on her upper face so they never sit under the bottom-center handle.
+// Pointer events => one path for ft5x06 touch AND mouse.
+// ==========================================================================
+class FaceTouch {
+  constructor() {
+    this.group = document.getElementById('face-touch-zones');
+    if (!this.group) return; // markup absent -> inert
+
+    this.localTtlMs = 3000;     // mirror the server ttl:3 for the local decay
+    this.decayTimer = null;
+    this.lastTapAt = 0;         // for double-tap (giggle) detection
+    this.doubleTapMs = 320;
+
+    try {
+      this.reduceMotion = !!(window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { this.reduceMotion = false; }
+
+    // zone id -> reaction descriptor. `mood` is a contract mood; `impulse` reuses
+    // MinnieController.reactImpulse; `blink`/`heart` fire the matching helper.
+    this.zones = {
+      'fz-nose':          { mood: 'surprised', impulse: { nod: -22, glasses: -0.18 } },           // boop! downward recoil
+      'fz-forehead':      { mood: 'curious',   impulse: { tilt: 7 } },                              // brow-up + tiny tilt
+      'fz-cheek-left':    { mood: 'loving',    impulse: { tilt: 4 },  heart: 'left' },              // blush + heart
+      'fz-cheek-right':   { mood: 'loving',    impulse: { tilt: -4 }, heart: 'right' },             // blush + heart
+      'fz-glasses-bridge':{ mood: 'playful',   impulse: { glasses: -0.22 } },                       // glasses wobble
+      'fz-glasses-left':  { mood: 'playful',   impulse: { glasses: -0.22, tilt: 3 } },
+      'fz-glasses-right': { mood: 'playful',   impulse: { glasses: -0.22, tilt: -3 } },
+      'fz-eye-left':      { mood: null,        blink: 'left' },                                     // deliberate wink
+      'fz-eye-right':     { mood: null,        blink: 'right' }
+    };
+
+    this.bind();
+  }
+
+  panelOpen() {
+    return !!(window.controlPanel && window.controlPanel.isOpen);
+  }
+
+  async postMood(mood) {
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 1500);
+      await fetch('/control/mood', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: mood, ttl: 3 }), cache: 'no-store', signal: c.signal
+      });
+      clearTimeout(t);
+    } catch (e) { /* offline / no server — local reaction still played */ }
+  }
+
+  // Apply the local reaction (mood + impulse + blink/heart), then arm decay.
+  react(zoneId) {
+    const z = this.zones[zoneId];
+    if (!z) return;
+
+    // 1a. optimistic mood (skip for pure blink/wink zones where mood is null)
+    if (z.mood) {
+      try { if (window.setEmbodyMood) window.setEmbodyMood(z.mood); } catch (e) {}
+    }
+    // 1b. impulse + extras (skipped under reduced motion; mood still applies)
+    if (!this.reduceMotion && minnie) {
+      if (z.impulse) minnie.reactImpulse(z.impulse);
+      if (z.heart) minnie.reactHeartBurst(z.heart);
+    }
+    if (z.blink && minnie) minnie.reactBlink(z.blink); // blink is essential feedback; keep even reduced
+
+    // 2. server sync so the LEDs react too (decays after ttl:3 on the backend)
+    if (z.mood) this.postMood(z.mood);
+
+    // local decay back to neutral to mirror the server ttl (only for mood zones)
+    if (z.mood) this.armDecay();
+  }
+
+  // double-tap anywhere on the face -> playful giggle
+  giggle() {
+    try { if (window.setEmbodyMood) window.setEmbodyMood('playful'); } catch (e) {}
+    if (!this.reduceMotion && minnie) {
+      minnie.reactImpulse({ tilt: 6, nod: -6 });
+      minnie.reactBlink('left');
+      setTimeout(() => { if (minnie) minnie.reactBlink('right'); }, 130);
+    }
+    this.postMood('playful');
+    this.armDecay();
+  }
+
+  armDecay() {
+    if (this.decayTimer) clearTimeout(this.decayTimer);
+    this.decayTimer = setTimeout(() => {
+      // Only revert if the SSE loop hasn't since driven a different mood — i.e.
+      // we only clear a mood that is still one of our transient reactions.
+      try { if (window.setEmbodyMood) window.setEmbodyMood('neutral'); } catch (e) {}
+      this.decayTimer = null;
+    }, this.localTtlMs);
+  }
+
+  // Resolve which zone a pointer event landed on (the zones are simple shapes
+  // that are direct children of the group; the event target IS the zone).
+  zoneIdFor(target) {
+    if (!target) return null;
+    const id = target.id;
+    return (id && this.zones[id]) ? id : null;
+  }
+
+  bind() {
+    // Single handler on the group resolves the zone AND single/double-tap, so a
+    // double-tap fires the giggle WITHOUT also firing the second zone reaction.
+    this.group.addEventListener('pointerdown', (e) => {
+      if (this.panelOpen()) return;          // suppress while the panel is open
+      const zoneId = this.zoneIdFor(e.target);
+      if (!zoneId) return;                    // poke landed in a gap -> ignore
+      e.preventDefault();
+
+      const now = (typeof e.timeStamp === 'number') ? e.timeStamp : 0;
+      if (this.lastTapAt && (now - this.lastTapAt) <= this.doubleTapMs) {
+        this.giggle();                        // double-tap anywhere on the face
+        this.lastTapAt = 0;                   // consume so a 3rd tap starts fresh
+      } else {
+        this.lastTapAt = now;
+        this.react(zoneId);                   // single-zone reaction
+      }
+    });
+  }
+}
+
+// Instantiate after the face controller exists (needs `minnie` for the react
+// helpers). DOMContentLoaded order: MinnieController is created in an earlier
+// listener, so `minnie` is set by the time this one runs.
+window.addEventListener('DOMContentLoaded', () => {
+  window.faceTouch = new FaceTouch();
 });

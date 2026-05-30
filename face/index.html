@@ -262,10 +262,29 @@
 
           <!-- Layer 7: Mouth -->
           <g id="mouth-group">
-            <path id="mouth" d="M 475 440 Q 500 455 525 440" 
+            <path id="mouth" d="M 475 440 Q 500 455 525 440"
                   fill="none" stroke="#bd00ff" stroke-width="3" stroke-linecap="round" filter="url(#neon-glow-purple)" />
           </g>
-          
+
+          <!-- Layer 8: Invisible TOUCH-REACTION zones (pointer events: ft5x06
+               touch + mouse). LAST children of #face-group so they paint ON TOP
+               and track her wobble. Document order == hit priority: forehead /
+               glasses sit first (below), eyes / nose last (on top) so they win
+               where regions overlap. Reactions are wired in app.js (FaceTouch).
+               'forehead' is the visible brow band above her eyes — the kiosk crop
+               pushes her true forehead off the top edge. -->
+          <g id="face-touch-zones" pointer-events="all" fill="#000" fill-opacity="0">
+            <rect id="fz-forehead" x="300" y="158" width="400" height="72" pointer-events="all" fill-opacity="0"/>
+            <rect id="fz-glasses-bridge" x="455" y="286" width="90" height="44" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-glasses-left" cx="255" cy="214" r="44" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-glasses-right" cx="745" cy="214" r="44" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-cheek-left" cx="305" cy="420" r="52" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-cheek-right" cx="695" cy="420" r="52" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-nose" cx="500" cy="382" r="48" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-eye-left" cx="345" cy="295" r="72" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-eye-right" cx="655" cy="295" r="72" pointer-events="all" fill-opacity="0"/>
+          </g>
+
         </g>
       </svg>
     </div>

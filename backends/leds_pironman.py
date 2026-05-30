@@ -10,8 +10,9 @@ the scaffold worker):
 
     is_available() -> bool        # True iff /dev/spidev0.0 is writable AND the
                                   #   neopixel_spi/board driver imports
-    setup(cfg: dict) -> None      # build the state->LED table from config
+    setup(cfg: dict) -> None      # build the state->LED + mood->LED tables
     on_state(state, cfg) -> None  # drive the LEDs to match an agent state
+    on_mood(mood, cfg) -> None    # tint the LEDs to match an emotional mood
 
 Pure hardware adapter — no HTTP, no TTS, no agent imports. LEDs are best-effort
 cosmetics: every call is wrapped so a missing driver, a busy bus, or a flaky
@@ -44,10 +45,25 @@ Config (from the generic plugin schema)::
         idle:     { color: "0044ff", style: "breathing" }
         thinking: { color: "ff9900", style: "flow" }
         ...                          # per-state {color, style[, brightness]}
+      moods:                         # OPTIONAL emotional tints (see on_mood)
+        happy:    { color: "FFC107" }
+        sad:      { color: "2962FF" }
+        ...                          # per-mood {color[, brightness]}
 
 Anything missing falls back to the built-in defaults below, so the backend runs
 even with an empty/absent config. ``style`` is recorded but **not animated** in
 v1 — every state is a solid fill (animation is a v2 background-thread concern).
+
+MOOD vs STATE precedence on the strip
+-------------------------------------
+``on_state`` and ``on_mood`` both drive the *same* 18 LEDs last-write-wins. We do
+NOT blend or layer: ``on_mood`` sets the color **immediately**, and the next
+``on_state`` for an active phase overrides it. Because set_state() fires on every
+hook transition (thinking/working/speaking/…), the activity color dominates while
+the agent is busy; the **mood tint shows in the gaps between transitions** (and
+on idle), which is exactly when the persona's "feeling" should read. Mood
+brightness is *intrinsic* (sad dims, excited brightens) — unlike states, a
+per-mood base brightness wins over the global ``leds.brightness`` (see setup()).
 """
 
 from __future__ import annotations
@@ -72,9 +88,26 @@ DEFAULT_STATE_COLORS: dict[str, dict] = {
     "listening": {"style": "breathing", "color": "00ddff", "brightness": 60},
 }
 
-# Resolved table (defaults merged with cfg). None until setup() runs; on_state()
-# lazily resolves from its cfg arg if setup() was never called.
+# Built-in default MOOD -> LED table (the persona's *feeling*, independent of
+# state). Overridable per-key via cfg["leds"]["moods"]. color = 6-digit hex w/o '#'.
+# Brightness is intrinsic to the mood (sad reads dim, excited bright) and — unlike
+# states — wins over the global leds.brightness so the nuance survives (see setup).
+DEFAULT_MOOD_COLORS: dict[str, dict] = {
+    "neutral":   {"color": "1E3A5F", "brightness": 25},
+    "happy":     {"color": "FFC107", "brightness": 70},
+    "excited":   {"color": "FF6D00", "brightness": 85},
+    "loving":    {"color": "FF2D78", "brightness": 75},
+    "playful":   {"color": "00E5FF", "brightness": 70},
+    "curious":   {"color": "7C4DFF", "brightness": 65},
+    "sad":       {"color": "2962FF", "brightness": 45},
+    "surprised": {"color": "EAEAEA", "brightness": 80},
+    "concerned": {"color": "FF7043", "brightness": 70},
+}
+
+# Resolved tables (defaults merged with cfg). None until setup() runs; on_state()/
+# on_mood() lazily resolve from their cfg arg if setup() was never called.
 _STATE_COLORS: dict[str, dict] | None = None
+_MOOD_COLORS: dict[str, dict] | None = None
 
 # Serialize hardware access so rapid calls from multiple threads produce a clean
 # last-write-wins on the strip instead of overlapping SPI transactions.
@@ -104,20 +137,27 @@ def is_available() -> bool:
 
 
 def setup(cfg: dict | None = None) -> None:
-    """Build the resolved state->LED table from ``cfg``, with defaults.
+    """Build the resolved state->LED AND mood->LED tables from ``cfg``, with defaults.
 
-    Merge precedence per state:
+    Merge precedence per STATE:
       * style:  cfg state override -> built-in default -> "solid"
       * color:  cfg state override -> built-in default -> "ffffff"
       * brightness: cfg per-state override -> cfg ``leds.brightness`` global
                     -> built-in default -> 60
-    User-defined states not in the defaults are accepted too. Never raises.
+    Merge precedence per MOOD (note: base brightness wins over the global, so a
+    mood's intrinsic intensity isn't flattened by the always-present global):
+      * color:  cfg mood override -> built-in default -> "ffffff"
+      * brightness: cfg per-mood override -> built-in default
+                    -> cfg ``leds.brightness`` global -> 60
+    A mood override may be a ``{color[, brightness]}`` dict OR a bare hex string.
+    User-defined states/moods not in the defaults are accepted too. Never raises.
     """
-    global _STATE_COLORS
+    global _STATE_COLORS, _MOOD_COLORS
     cfg = cfg or {}
     leds_cfg = cfg.get("leds") or {}
     global_brightness = leds_cfg.get("brightness")
     states_cfg = leds_cfg.get("states") or {}
+    moods_cfg = leds_cfg.get("moods") or {}
 
     resolved: dict[str, dict] = {}
     for name in set(DEFAULT_STATE_COLORS) | set(states_cfg):
@@ -140,8 +180,34 @@ def setup(cfg: dict | None = None) -> None:
             "brightness": _clamp_brightness(brightness),
         }
 
+    resolved_moods: dict[str, dict] = {}
+    for name in set(DEFAULT_MOOD_COLORS) | set(moods_cfg):
+        base = DEFAULT_MOOD_COLORS.get(name, {})
+        override = moods_cfg.get(name)
+        if isinstance(override, str):           # bare hex string shorthand
+            override = {"color": override}
+        elif not isinstance(override, dict):
+            override = {}
+
+        color = _normalize_hex(override.get("color") or base.get("color") or "ffffff")
+
+        if override.get("brightness") is not None:
+            brightness = override["brightness"]
+        elif base.get("brightness") is not None:   # mood intensity is intrinsic
+            brightness = base["brightness"]
+        elif global_brightness is not None:
+            brightness = global_brightness
+        else:
+            brightness = 60
+
+        resolved_moods[name] = {
+            "color": color,
+            "brightness": _clamp_brightness(brightness),
+        }
+
     with _lock:
         _STATE_COLORS = resolved
+        _MOOD_COLORS = resolved_moods
 
 
 def on_state(state: str, cfg: dict | None = None) -> None:
@@ -166,6 +232,34 @@ def on_state(state: str, cfg: dict | None = None) -> None:
     params = table.get(state)
     if not params:
         return  # unknown state -> no-op (leave strip as-is)
+    _set_rgb(params["color"], params["brightness"])
+
+
+def on_mood(mood: str, cfg: dict | None = None) -> None:
+    """Tint the LEDs to match an emotional ``mood``. Best-effort; never raises.
+
+    Sets the strip color immediately; a later ``on_state`` for an active phase
+    overrides it (see the module docstring's mood-vs-state precedence note). An
+    unknown/unmapped mood falls back to the ``neutral`` tint rather than no-op'ing,
+    so the strip always reflects *some* defined mood. A host without a drivable
+    strip is inert. Safe to call rapidly from any thread.
+    """
+    if not is_available():
+        return
+
+    table = _MOOD_COLORS
+    if table is None:
+        # setup() was never called — resolve from this call's cfg.
+        try:
+            setup(cfg)
+        except Exception:  # noqa: BLE001 — config resolution must never crash the agent.
+            logger.debug("led setup() failed (ignored).", exc_info=True)
+            return
+        table = _MOOD_COLORS or {}
+
+    params = table.get(mood) or table.get("neutral")
+    if not params:
+        return  # no mapping at all -> no-op (leave strip as-is)
     _set_rgb(params["color"], params["brightness"])
 
 
@@ -268,4 +362,7 @@ def _clamp_brightness(value: object) -> int:
     return max(0, min(100, n))
 
 
-__all__ = ["is_available", "setup", "on_state", "DEFAULT_STATE_COLORS"]
+__all__ = [
+    "is_available", "setup", "on_state", "on_mood",
+    "DEFAULT_STATE_COLORS", "DEFAULT_MOOD_COLORS",
+]

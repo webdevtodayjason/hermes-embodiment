@@ -44,6 +44,7 @@ DEFAULTS = {
         "host": "127.0.0.1",
         "port": 8830,
         "theme": "default",
+        "mood_hold": 8,            # seconds a non-neutral mood lingers before decaying to neutral
         "kiosk": {
             "enabled": False,
             "user_data_dir": "~/.embody-kiosk",
@@ -58,6 +59,17 @@ DEFAULTS = {
             "thinking": {"color": "FFB000", "style": "flow"},
             "working":  {"color": "8000FF", "style": "solid"},
             "speaking": {"color": "00C853", "style": "flow"},
+        },
+        "moods": {                 # emotional tints (independent of state); color = 6-hex no '#'
+            "neutral":   {"color": "1E3A5F"},
+            "happy":     {"color": "FFC107"},
+            "excited":   {"color": "FF6D00"},
+            "loving":    {"color": "FF2D78"},
+            "playful":   {"color": "00E5FF"},
+            "curious":   {"color": "7C4DFF"},
+            "sad":       {"color": "2962FF"},
+            "surprised": {"color": "EAEAEA"},
+            "concerned": {"color": "FF7043"},
         },
     },
     "oled": {

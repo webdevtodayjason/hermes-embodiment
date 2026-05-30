@@ -32,6 +32,7 @@ face:
   host: "127.0.0.1"
   port: 8830
   theme: "default"             # face-ui reads this as top-level `theme` via /config
+  mood_hold: 8                 # seconds a non-neutral mood lingers before decaying back to neutral
   kiosk:                       # OPTIONAL — not wired at first-light; a deploy-time step
     enabled: false             # true => launch a dedicated kiosk browser at the face URL
     user_data_dir: "~/.embody-kiosk"
@@ -45,6 +46,16 @@ leds:
     thinking: { color: "FFB000", style: "flow" }
     working:  { color: "8000FF", style: "solid" }
     speaking: { color: "00C853", style: "flow" }
+  moods:                       # mood -> { color: <6-hex no #> }  (emotional tint, independent of state)
+    neutral:   { color: "1E3A5F" }   # calm blue   (also the decay target)
+    happy:     { color: "FFC107" }   # warm amber
+    excited:   { color: "FF6D00" }   # bright orange
+    loving:    { color: "FF2D78" }   # pink
+    playful:   { color: "00E5FF" }   # cyan
+    curious:   { color: "7C4DFF" }   # violet
+    sad:       { color: "2962FF" }   # deep blue
+    surprised: { color: "EAEAEA" }   # near-white
+    concerned: { color: "FF7043" }   # amber-red
 
 oled:
   backend: "auto"              # auto | pironman | off  (OPTIONAL; backend module shipped separately)

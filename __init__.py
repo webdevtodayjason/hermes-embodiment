@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from . import backends as _backends
 from .core import config as _config
+from .core import mood as _mood
 from .core import state as _state
 from .core import voice as _voice
 
@@ -58,6 +59,7 @@ def _tool_status(tool_name: str) -> str:
 
 def _on_session_start(**kw):
     _state.set_state("idle")                              # no status -> face shows the persona name
+    _state.set_mood("neutral")                            # fresh session starts emotionally neutral
 
 
 def _on_pre_llm(**kw):
@@ -73,6 +75,10 @@ def _on_post_tool(tool_name="", **kw):
 
 
 def _on_post_llm(assistant_response="", platform="", **kw):
+    # Infer + broadcast the emotional MOOD from the reply, INDEPENDENT of state.
+    # set_mood is best-effort (coerces/never raises), so this can never break speech.
+    _state.set_mood(_mood.infer_mood(assistant_response))
+
     # SPEAK here (NOT transform_llm_output). Fire-and-forget so the loop isn't blocked.
     # post_llm_call fires every turn on every platform; first-light is a single kiosk
     # surface so we speak unconditionally. Filter on `platform` if other platforms attach.

@@ -20,9 +20,19 @@ is no base class to subclass.)
         ("idle" | "thinking" | "working" | "speaking" | "listening").
         Called from core.state.set_state() on every transition. Must never raise.
 
+    on_mood(mood: str, cfg: dict) -> None   [OPTIONAL]
+        Drive the hardware to match an emotional MOOD ("neutral" | "happy" |
+        "excited" | "loving" | "playful" | "curious" | "sad" | "surprised" |
+        "concerned"). Mood is INDEPENDENT of state. Called from
+        core.state.set_mood() on every mood change. Additive and OPTIONAL: a
+        backend that omits it is still a valid state backend (the adapter no-ops
+        the call). Must never raise.
+
 A module WITHOUT a callable ``on_state`` is not a state backend and is ignored by
 discovery — that is how ``audio.py`` (which exposes ``play()``, not ``on_state``)
-stays out of the state-dispatch list without a hand-maintained skip-list.
+stays out of the state-dispatch list without a hand-maintained skip-list. Mood is
+ADDITIVE: discovery still gates on ``on_state`` only, and ``on_mood`` is invoked
+when present.
 
 CONFIG GATING
 -------------
@@ -73,6 +83,13 @@ class _ModuleBackend:
         fn = getattr(self._module, "on_state", None)
         if callable(fn):
             fn(state, cfg)
+
+    def on_mood(self, mood: str, cfg: dict) -> None:
+        # OPTIONAL + additive: a backend without on_mood simply doesn't react to
+        # mood. Mirrors on_state; the caller (core.state.set_mood) also guards.
+        fn = getattr(self._module, "on_mood", None)
+        if callable(fn):
+            fn(mood, cfg)
 
 
 def _discover() -> None:

@@ -16,12 +16,19 @@ Endpoints
 Contracts (must match the other workers exactly)
 -------------------------------------------------
   * State vocabulary: "idle" | "thinking" | "working" | "speaking" | "listening"
-  * SSE messages:  ``data: {"state": "<name>"}\\n\\n``
-  * /config JSON:  ``{"persona": {"name": ..., "wake_word": ...}, "theme": <face.theme>, ...}``
-    NOTE: face.js reads the theme as a TOP-LEVEL ``theme`` key (not face.theme),
-    so we flatten ``config.face.theme`` up to ``theme`` here.
-  * Hardware fan-out: set_state() calls ``on_state(name, cfg)`` on every active
-    backend (see embody.backends.get_active_backends).
+  * Mood vocabulary (INDEPENDENT of state; default "neutral"): "neutral" |
+    "happy" | "excited" | "loving" | "playful" | "curious" | "sad" | "surprised"
+    | "concerned"  (see embody.core.mood for inference).
+  * SSE messages:  ``data: {"state": "<name>", "status": <s>, "mood": "<m>"}\\n\\n``
+    EVERY broadcast — from set_state() AND set_mood() — carries the CURRENT mood,
+    so a face that connects mid-stream never misses it. Absent/extra keys stay
+    backward-compatible (a consumer reading only ``state`` is unaffected).
+  * /config JSON:  ``{"persona": {...}, "theme": <face.theme>, "states": [...],
+    "moods": [...]}``. NOTE: face.js reads the theme as a TOP-LEVEL ``theme`` key
+    (not face.theme), so we flatten ``config.face.theme`` up to ``theme`` here.
+  * Hardware fan-out: set_state() calls ``on_state(name, cfg)`` and set_mood()
+    calls ``on_mood(mood, cfg)`` on every active backend (best-effort; a backend
+    error never escapes). See embody.backends.get_active_backends.
 """
 from __future__ import annotations
 
@@ -36,6 +43,14 @@ from pathlib import Path
 
 VALID_STATES = ("idle", "thinking", "working", "speaking", "listening")
 
+# Mood vocabulary (the locked cross-worker contract; default "neutral"). Mood is
+# the persona's *feeling*, INDEPENDENT of the activity STATE. Order matters: it is
+# the order config_payload() reports under "moods". Mirrors core.mood.MOODS.
+VALID_MOODS = (
+    "neutral", "happy", "excited", "loving",
+    "playful", "curious", "sad", "surprised", "concerned",
+)
+
 # face/ is a sibling of the plugin root (parent of this core/ package)
 FACE_DIR = str(Path(__file__).resolve().parent.parent / "face")
 
@@ -46,6 +61,13 @@ _backends: list = []
 _state_lock = threading.Lock()
 _current_state = "idle"
 _current_status = None   # optional human-friendly activity label (e.g. "searching the web…")
+_current_mood = "neutral"   # persona feeling; updated by set_mood(), guarded by _state_lock
+
+# Mood decay: revert to "neutral" after face.mood_hold seconds of no new mood, so
+# a one-off reaction fades instead of sticking. Guarded by its own lock (never
+# nested under _state_lock) so the daemon Timer can re-enter set_mood() safely.
+_mood_timer_lock = threading.Lock()
+_mood_timer: "threading.Timer | None" = None
 
 _subscribers_lock = threading.Lock()
 _subscribers: "set[queue.Queue]" = set()
@@ -83,9 +105,11 @@ def set_state(name: str, status=None) -> str:
     with _state_lock:
         _current_state = name
         _current_status = status
+        mood = _current_mood   # carry the current mood in EVERY broadcast
 
-    # 1) push to all connected faces (SSE)
-    _broadcast(json.dumps({"state": name, "status": status}))
+    # 1) push to all connected faces (SSE) — mood rides along so a late-joining
+    #    face stays in sync even when only the state changed.
+    _broadcast(json.dumps({"state": name, "status": status, "mood": mood}))
 
     # 2) drive hardware backends (never let a backend crash the hook)
     #    (backends react to `state` only; `status` is a face-only concern)
@@ -98,15 +122,60 @@ def set_state(name: str, status=None) -> str:
     return name
 
 
+def set_mood(mood: str) -> str:
+    """Set the embodiment MOOD: push it to the face (SSE) and to every backend.
+
+    Mood is the persona's *feeling* and is INDEPENDENT of the activity STATE — it
+    tints the face/LEDs between (and during) activity transitions. An unknown mood
+    is coerced to ``"neutral"`` (never an error), so a bad inference or typo can't
+    drive an undefined expression.
+
+    The broadcast carries the CURRENT state/status plus the new mood
+    (``{"state", "status", "mood"}``) so a face only ever needs one event shape.
+    Backends are driven via ``on_mood(mood, cfg)`` — best-effort, exactly like
+    ``on_state``. Returns the mood actually applied (post-coercion).
+
+    Safe to call before the server starts and with zero subscribers/backends.
+    """
+    global _current_mood
+    if mood not in VALID_MOODS:
+        mood = "neutral"
+
+    with _state_lock:
+        _current_mood = mood
+        state = _current_state
+        status = _current_status
+
+    # 1) push to all connected faces (SSE) with the current state/status + new mood
+    _broadcast(json.dumps({"state": state, "status": status, "mood": mood}))
+
+    # 2) drive hardware backends (never let a backend crash the hook)
+    for backend in _backends:
+        try:
+            backend.on_mood(mood, _cfg)
+        except Exception as exc:  # pragma: no cover - defensive
+            _warn(f"backend {getattr(backend, 'name', '?')}.on_mood({mood!r}) failed: {exc}")
+
+    # 3) (re)arm the decay-to-neutral timer so a one-off reaction fades
+    _arm_mood_decay(mood)
+
+    return mood
+
+
 def current_state() -> str:
     with _state_lock:
         return _current_state
 
 
-def snapshot() -> dict:
-    """Current {state, status} — used by /state.json and the SSE connect-sync frame."""
+def current_mood() -> str:
     with _state_lock:
-        return {"state": _current_state, "status": _current_status}
+        return _current_mood
+
+
+def snapshot() -> dict:
+    """Current {state, status, mood} — used by /state.json AND the SSE connect-sync frame."""
+    with _state_lock:
+        return {"state": _current_state, "status": _current_status, "mood": _current_mood}
 
 
 def start_server() -> "StateServer":
@@ -140,11 +209,12 @@ def config_payload() -> dict:
         },
         "theme": face.get("theme", "default"),   # TOP-LEVEL for face.js (cfg.theme)
         "states": list(VALID_STATES),
+        "moods": list(VALID_MOODS),
     }
 
 
 def slash_handler(raw_args: str) -> str:
-    """Handler for the ``/embody`` slash command:  state | face | test."""
+    """Handler for the ``/embody`` slash command:  state | mood | face | test."""
     args = (raw_args or "").strip().split()
     if not args:
         return _status_text()
@@ -160,6 +230,17 @@ def slash_handler(raw_args: str) -> str:
             return f"Unknown state '{target}'. Valid: {', '.join(VALID_STATES)}."
         return _status_text()
 
+    if cmd == "mood":
+        # explicit MOOD override (bypasses inference). Unknown -> coerced to neutral.
+        if len(args) >= 2:
+            target = args[1].lower()
+            applied = set_mood(target)
+            if target not in VALID_MOODS:
+                return (f"Unknown mood '{target}', coerced to '{applied}'. "
+                        f"Valid: {', '.join(VALID_MOODS)}.")
+            return f"embody mood set to '{applied}'."
+        return _status_text()
+
     if cmd == "face":
         host, port = _host_port()
         return f"embody face: http://{host}:{port}/  (stream: /events, poll: /state.json, cfg: /config)"
@@ -168,7 +249,7 @@ def slash_handler(raw_args: str) -> str:
         threading.Thread(target=_run_test_cycle, name="embody-test", daemon=True).start()
         return "embody test: cycling thinking->working->speaking->idle (~4s)."
 
-    return "Usage: /embody [state <name> | face | test]"
+    return "Usage: /embody [state <name> | mood <name> | face | test]"
 
 
 # =============================================================================
@@ -177,6 +258,49 @@ def slash_handler(raw_args: str) -> str:
 def _host_port():
     face = _cfg.get("face", {}) if isinstance(_cfg, dict) else {}
     return face.get("host", "127.0.0.1"), int(face.get("port", 8830))
+
+
+def _mood_hold_seconds() -> float:
+    """How long a non-neutral mood lingers before decaying to neutral (config-driven)."""
+    face = _cfg.get("face", {}) if isinstance(_cfg, dict) else {}
+    try:
+        return float(face.get("mood_hold", 8))
+    except (TypeError, ValueError):
+        return 8.0
+
+
+def _arm_mood_decay(mood: str) -> None:
+    """(Re)arm the decay timer that reverts the mood to "neutral".
+
+    Cancels any pending timer first (newest mood wins), then — for a non-neutral
+    mood with a positive hold — starts a fresh daemon ``threading.Timer``. Setting
+    "neutral" simply disarms (no timer armed). Best-effort: a timer failure is
+    swallowed so a mood set can never crash a turn. Daemon => never blocks exit.
+    """
+    global _mood_timer
+    with _mood_timer_lock:
+        if _mood_timer is not None:
+            _mood_timer.cancel()
+            _mood_timer = None
+        if mood == "neutral":
+            return
+        hold = _mood_hold_seconds()
+        if hold <= 0:
+            return
+        try:
+            timer = threading.Timer(hold, _decay_to_neutral)
+            timer.daemon = True
+            _mood_timer = timer
+            timer.start()
+        except Exception as exc:  # pragma: no cover - defensive
+            _warn(f"failed to arm mood decay timer: {exc}")
+            _mood_timer = None
+
+
+def _decay_to_neutral() -> None:
+    """Timer callback: fade back to neutral. (set_mood re-enters _arm_mood_decay,
+    which disarms cleanly because the mood is "neutral".)"""
+    set_mood("neutral")
 
 
 def _broadcast(data_str: str) -> None:
@@ -195,8 +319,8 @@ def _status_text() -> str:
         n = len(_subscribers)
     names = ", ".join(getattr(b, "name", "?") for b in _backends) or "(none)"
     return (
-        f"embody state: '{current_state()}' | face: http://{host}:{port}/ "
-        f"| SSE clients: {n} | backends: {names}"
+        f"embody state: '{current_state()}' | mood: '{current_mood()}' "
+        f"| face: http://{host}:{port}/ | SSE clients: {n} | backends: {names}"
     )
 
 

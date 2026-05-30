@@ -8,6 +8,7 @@ UI + TTS) runs unchanged on a bare Hermes box.
     is_available() -> bool        # always True (it's the universal fallback)
     setup(cfg: dict) -> None      # no-op
     on_state(state, cfg) -> None  # no-op
+    on_mood(mood, cfg) -> None    # no-op
 
 Pure adapter — no HTTP, no TTS, no agent imports. Never raises.
 """
@@ -40,4 +41,9 @@ def on_state(state: str, cfg: dict | None = None) -> None:
     return None
 
 
-__all__ = ["is_available", "setup", "on_state"]
+def on_mood(mood: str, cfg: dict | None = None) -> None:
+    """No-op. The null backend has no hardware to tint."""
+    return None
+
+
+__all__ = ["is_available", "setup", "on_state", "on_mood"]

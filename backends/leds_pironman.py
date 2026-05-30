@@ -1,0 +1,271 @@
+"""leds_pironman.py — Pironman RGB LED backend for hermes-embody.
+
+Drives the Pironman 5 Pro Max case RGB (18× WS2812B) **directly over SPI** so an
+agent-state change lights the case **instantly** — no config-file write, no
+``pironman5`` CLI, no service restart. This replaces the old CLI-shelling backend
+(which wrote a root-owned config and fought pironman's own LED loop).
+
+Implements the shared backend interface (see ``backends/__init__.py``, owned by
+the scaffold worker):
+
+    is_available() -> bool        # True iff /dev/spidev0.0 is writable AND the
+                                  #   neopixel_spi/board driver imports
+    setup(cfg: dict) -> None      # build the state->LED table from config
+    on_state(state, cfg) -> None  # drive the LEDs to match an agent state
+
+Pure hardware adapter — no HTTP, no TTS, no agent imports. LEDs are best-effort
+cosmetics: every call is wrapped so a missing driver, a busy bus, or a flaky
+write can NEVER raise into the agent. On a host without a Pironman (no writable
+``/dev/spidev0.0`` or no Blinka driver) this backend is inert: ``is_available()``
+is False and ``on_state`` no-ops.
+
+Hardware path (verified on the live Pi 5 / kernel 6.6.74 as the ``spi``-group
+user — the *same* code path pironman runs):
+
+    import board, neopixel_spi
+    strip = neopixel_spi.NeoPixel_SPI(board.SPI(), 18,
+                                      pixel_order=neopixel_spi.GRB,
+                                      auto_write=False, brightness=1.0)
+    strip.fill((r, g, b)); strip.show()   # the lib re-orders RGB -> GRB on the wire
+
+Pre-req (one-time, handled at deploy): pironman must release the SPI bus — done by
+removing ``"ws2812"`` from the Pro Max variant's ``PERIPHERALS`` so its
+``WS2812Addon`` never opens ``/dev/spidev0.0``. OLED / dashboard / fans are
+unaffected. Two processes cannot both own the bus.
+
+Hardware imports are **lazy** (inside functions) so this module imports/compiles
+fine off-Pi, where ``board`` is absent.
+
+Config (from the generic plugin schema)::
+
+    leds:
+      brightness: 60                 # optional global default brightness (0-100)
+      states:
+        idle:     { color: "0044ff", style: "breathing" }
+        thinking: { color: "ff9900", style: "flow" }
+        ...                          # per-state {color, style[, brightness]}
+
+Anything missing falls back to the built-in defaults below, so the backend runs
+even with an empty/absent config. ``style`` is recorded but **not animated** in
+v1 — every state is a solid fill (animation is a v2 background-thread concern).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+
+logger = logging.getLogger("embody.backends.leds_pironman")
+
+# Pironman 5 Pro Max case strip: 18 WS2812B on SPI0 (GPIO10/MOSI).
+_SPI_DEV = "/dev/spidev0.0"
+_LED_COUNT = 18
+
+# Built-in default state -> LED table. Kept as the team default; everything here
+# is overridable per-key via cfg["leds"]. color = 6-digit hex WITHOUT '#'.
+DEFAULT_STATE_COLORS: dict[str, dict] = {
+    "idle":      {"style": "breathing", "color": "0044ff", "brightness": 25},
+    "thinking":  {"style": "flow",      "color": "ff9900", "brightness": 60},
+    "working":   {"style": "solid",     "color": "8800ff", "brightness": 70},
+    "speaking":  {"style": "flow",      "color": "00ff66", "brightness": 80},
+    "listening": {"style": "breathing", "color": "00ddff", "brightness": 60},
+}
+
+# Resolved table (defaults merged with cfg). None until setup() runs; on_state()
+# lazily resolves from its cfg arg if setup() was never called.
+_STATE_COLORS: dict[str, dict] | None = None
+
+# Serialize hardware access so rapid calls from multiple threads produce a clean
+# last-write-wins on the strip instead of overlapping SPI transactions.
+_lock = threading.Lock()
+
+# Lazy hardware handles / probes (all hardware imports are deferred to runtime so
+# this module imports off-Pi). _driver_ok caches the import probe; _strip is the
+# NeoPixel_SPI singleton; _init_failed latches a hard init failure -> stay inert.
+_driver_ok: bool | None = None
+_strip: object | None = None
+_init_failed = False
+_absent_logged = False
+
+
+# --------------------------------------------------------------------------- #
+# Backend interface
+# --------------------------------------------------------------------------- #
+def is_available() -> bool:
+    """True iff the case strip is drivable here.
+
+    Gate: ``/dev/spidev0.0`` exists AND is writable by us (``jason`` is in the
+    ``spi`` group, so no sudo) AND the ``board``/``neopixel_spi`` driver imports.
+    """
+    if not (os.path.exists(_SPI_DEV) and os.access(_SPI_DEV, os.W_OK)):
+        return False
+    return _probe_driver()
+
+
+def setup(cfg: dict | None = None) -> None:
+    """Build the resolved state->LED table from ``cfg``, with defaults.
+
+    Merge precedence per state:
+      * style:  cfg state override -> built-in default -> "solid"
+      * color:  cfg state override -> built-in default -> "ffffff"
+      * brightness: cfg per-state override -> cfg ``leds.brightness`` global
+                    -> built-in default -> 60
+    User-defined states not in the defaults are accepted too. Never raises.
+    """
+    global _STATE_COLORS
+    cfg = cfg or {}
+    leds_cfg = cfg.get("leds") or {}
+    global_brightness = leds_cfg.get("brightness")
+    states_cfg = leds_cfg.get("states") or {}
+
+    resolved: dict[str, dict] = {}
+    for name in set(DEFAULT_STATE_COLORS) | set(states_cfg):
+        base = DEFAULT_STATE_COLORS.get(name, {})
+        override = states_cfg.get(name) or {}
+
+        style = override.get("style") or base.get("style") or "solid"
+        color = _normalize_hex(override.get("color") or base.get("color") or "ffffff")
+
+        if override.get("brightness") is not None:
+            brightness = override["brightness"]
+        elif global_brightness is not None:
+            brightness = global_brightness
+        else:
+            brightness = base.get("brightness", 60)
+
+        resolved[name] = {
+            "style": str(style),
+            "color": color,
+            "brightness": _clamp_brightness(brightness),
+        }
+
+    with _lock:
+        _STATE_COLORS = resolved
+
+
+def on_state(state: str, cfg: dict | None = None) -> None:
+    """Set the LEDs to match ``state``. Best-effort; never raises.
+
+    Unknown/unmapped states are silent no-ops (the strip keeps its last color).
+    A host without a drivable strip is inert. Safe to call rapidly from any thread.
+    """
+    if not is_available():
+        return
+
+    table = _STATE_COLORS
+    if table is None:
+        # setup() was never called — resolve from this call's cfg.
+        try:
+            setup(cfg)
+        except Exception:  # noqa: BLE001 — config resolution must never crash the agent.
+            logger.debug("led setup() failed (ignored).", exc_info=True)
+            return
+        table = _STATE_COLORS or {}
+
+    params = table.get(state)
+    if not params:
+        return  # unknown state -> no-op (leave strip as-is)
+    _set_rgb(params["color"], params["brightness"])
+
+
+# --------------------------------------------------------------------------- #
+# Internals (the only place that knows the SPI / WS2812 driver)
+# --------------------------------------------------------------------------- #
+def _probe_driver() -> bool:
+    """Cache-check whether the Blinka neopixel_spi driver imports on this host."""
+    global _driver_ok, _absent_logged
+    if _driver_ok is not None:
+        return _driver_ok
+    try:
+        import board  # noqa: F401  (Blinka — Pi-only)
+        import neopixel_spi  # noqa: F401
+        _driver_ok = True
+    except Exception:  # noqa: BLE001 — off-Pi this is expected; backend goes inert.
+        _driver_ok = False
+        if not _absent_logged:
+            logger.debug("neopixel_spi/board unavailable; LED backend inert.", exc_info=True)
+            _absent_logged = True
+    return _driver_ok
+
+
+def _ensure_strip() -> object | None:
+    """Lazily build the NeoPixel_SPI singleton. Caller must hold ``_lock``.
+
+    Returns the strip handle, or None if init failed (then the backend is inert
+    for the rest of the process — never retried, never raises).
+    """
+    global _strip, _init_failed
+    if _strip is not None or _init_failed:
+        return _strip
+    try:
+        import board
+        import neopixel_spi as neopixel
+
+        # brightness=1.0: we scale colors manually (like pironman) to avoid
+        # double-dimming. auto_write=False: every change needs an explicit show().
+        _strip = neopixel.NeoPixel_SPI(
+            board.SPI(),
+            _LED_COUNT,
+            pixel_order=neopixel.GRB,
+            auto_write=False,
+            brightness=1.0,
+        )
+    except Exception:  # noqa: BLE001 — LEDs are best-effort; never crash the agent.
+        _init_failed = True
+        _strip = None
+        logger.debug("LED strip init failed; backend inert.", exc_info=True)
+    return _strip
+
+
+def _set_rgb(color: str, brightness: int) -> None:
+    """Solid-fill all 18 LEDs with ``color`` scaled by ``brightness`` (0-100).
+
+    Best-effort, thread-safe (last-write-wins), never raises. v1 ignores ``style``
+    (solid fill only). A 162-byte SPI write is sub-millisecond → instant.
+    """
+    rgb = _hex_to_rgb(color)
+    if rgb is None:
+        return
+    # Scale like pironman's ws2812 addon: color * brightness%; clamp to a byte.
+    scaled = tuple(max(0, min(255, int(x * brightness * 0.01))) for x in rgb)
+    try:
+        with _lock:
+            strip = _ensure_strip()
+            if strip is None:
+                return
+            strip.fill(scaled)   # NeoPixel_SPI re-orders RGB -> GRB on the wire
+            strip.show()
+    except Exception:  # noqa: BLE001 — LEDs are best-effort; never crash the agent.
+        logger.debug("LED SPI write failed (ignored).", exc_info=True)
+
+
+def _hex_to_rgb(value: object) -> tuple[int, int, int] | None:
+    """Parse a 6-digit hex color (with/without '#') into an (r, g, b) tuple.
+
+    Returns None on malformed input so the caller no-ops instead of raising.
+    """
+    h = _normalize_hex(value)
+    if len(h) != 6:
+        return None
+    try:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    except ValueError:
+        return None
+
+
+def _normalize_hex(value: object) -> str:
+    """Coerce a color to a bare 6-ish-digit hex string (strip '#'/whitespace)."""
+    return str(value).strip().lstrip("#")
+
+
+def _clamp_brightness(value: object) -> int:
+    """Coerce brightness to an int in [0, 100]; fall back to 60 on bad input."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 60
+    return max(0, min(100, n))
+
+
+__all__ = ["is_available", "setup", "on_state", "DEFAULT_STATE_COLORS"]

@@ -1,0 +1,15 @@
+name: embody                 # registry name; the installer moves the repo to ~/.hermes/plugins/embody/
+version: "0.1.0"
+manifest_version: 1          # _SUPPORTED_MANIFEST_VERSION = 1 (plugins_cmd.py)
+description: "Embodiment — animated face UI + optional hardware (Pironman LEDs) + ElevenLabs voice, driven by agent state."
+author: "Titanium Computing"
+kind: standalone             # DEFAULT. standalone => opt-in via plugins.enabled
+requires_env:                # installer prompts for these and writes them to ~/.hermes/.env
+  - ELEVENLABS_API_KEY
+hooks:                       # declarative list (informational); real wiring is register() in __init__.py
+  - on_session_start
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - post_llm_call
+  - on_session_end

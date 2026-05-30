@@ -1,0 +1,50 @@
+# embody — configuration (the user-facing schema).
+#
+# On install, `hermes plugins install` copies this file to
+#   ~/.hermes/plugins/embody/config.yaml   (never clobbering an existing one).
+# The plugin loads that config itself, applying the built-in defaults below for
+# every missing key — so a bare box with NO config file still runs as
+# "animated face in a browser + TTS on the default sink".
+#
+# Nothing here is hardcoded in code. "Minnie" is just an example instance:
+# see examples/minnie/config.yaml.
+
+persona:
+  name: "Assistant"            # face nameplate + page title (face-ui reads persona.name via /config)
+  wake_word: "hey assistant"   # reserved for a future STT wave; unused at first-light
+
+voice:
+  enabled: true                # false => never synthesize/play speech
+  provider: ""                 # "" => inherit Hermes tts.provider (currently elevenlabs)
+  voice_id: ""                 # "" => inherit Hermes tts.elevenlabs.voice_id (currently "Adam")
+  speak_on: "post_llm_call"    # which hook drives speech (advanced; first-light = post_llm_call)
+
+audio:
+  backend: "auto"              # auto | pipewire | alsa | hermes-default | off
+                               #   auto => pipewire if `paplay` present, else alsa if `aplay`,
+                               #           else Hermes' own player. off => silent (face/LEDs only).
+  device: ""                   # PipeWire sink name OR ALSA device. "" => system default sink.
+                               #   example (a Pi pinned to HDMI):
+                               #   "alsa_output.platform-107c701400.hdmi.hdmi-stereo"
+
+face:
+  enabled: true                # always-on web transport (face page + SSE + /config)
+  host: "127.0.0.1"
+  port: 8830
+  theme: "default"             # face-ui reads this as top-level `theme` via /config
+  kiosk:                       # OPTIONAL — not wired at first-light; a deploy-time step
+    enabled: false             # true => launch a dedicated kiosk browser at the face URL
+    user_data_dir: "~/.embody-kiosk"
+    command: ""                # "" => auto-build chromium --kiosk --app=<url>; override for other browsers
+
+leds:
+  backend: "auto"              # auto (active iff `pironman5` on PATH) | pironman | off
+  brightness: 60               # global default brightness 0-100 (per-state may override)
+  states:                      # state -> { color: <6-hex no #>, style: <solid|breathing|flow|...> }
+    idle:     { color: "1E3A5F", style: "breathing" }
+    thinking: { color: "FFB000", style: "flow" }
+    working:  { color: "8000FF", style: "solid" }
+    speaking: { color: "00C853", style: "flow" }
+
+oled:
+  backend: "auto"              # auto | pironman | off  (OPTIONAL; backend module shipped separately)

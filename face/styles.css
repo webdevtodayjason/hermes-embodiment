@@ -1,0 +1,637 @@
+/* ==========================================================================
+   MINNIE AI KIOSK DESIGN SYSTEM & ESTHETICS (styles.css)
+   ========================================================================== */
+
+/* Color Tokens & Variables */
+:root {
+  --bg-color: #010104;
+  --bg-glow-color: rgba(3, 3, 12, 0.98);
+  
+  /* Cyberpunk glows */
+  --neon-cyan: #00f0ff;
+  --neon-purple: #bd00ff;
+  --neon-pink: #ff2a85;
+  --neon-blue: #0066ff;
+  --neon-amber: #ffaa00;
+  --neon-red: #ff003c;
+  
+  /* State transition timing */
+  --blink-duration: 0.12s;
+  --state-transition: 0.4s;
+
+  /* Offline system-font stacks (no CDN). Display leans geometric/techno; on the
+     Raspberry Pi these resolve to DejaVu Sans — clean and fully offline. */
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "DejaVu Sans", Arial, sans-serif;
+  --font-display: "Bahnschrift", "DIN Alternate", "Futura", "Century Gothic", "Avenir Next", var(--font-body);
+}
+
+/* Global Reset */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none; /* Kiosk safety */
+  -webkit-user-drag: none;
+}
+
+html, body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: var(--bg-color);
+  font-family: var(--font-body);
+  color: #ffffff;
+  cursor: none; /* Hide cursor for kiosk layout */
+}
+
+/* Starfield Background & Soft Radial Center Glow */
+body {
+  background: radial-gradient(circle at 50% 36%, var(--bg-glow-color) 0%, var(--bg-color) 85%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+body::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    radial-gradient(white, rgba(255,255,255,.15) 1.5px, transparent 3px),
+    radial-gradient(white, rgba(255,255,255,.1) 1px, transparent 2px);
+  background-size: 400px 400px, 280px 280px;
+  background-position: 0 0, 70px 110px;
+  opacity: 0.12;
+  z-index: 0;
+  pointer-events: none;
+}
+
+#particle-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.background-glow {
+  position: absolute;
+  top: 36%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(189, 0, 255, 0.08) 0%, rgba(0, 240, 255, 0.03) 50%, rgba(0,0,0,0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  transition: background var(--state-transition) ease;
+}
+
+/* Main UI Container */
+.kiosk-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 1150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 40px 20px 15px 20px;
+  z-index: 10;
+}
+
+/* Face Group Container */
+#face-container {
+  flex-grow: 1;
+  width: 100%;
+  max-height: 48%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 10px;
+}
+
+#face-svg {
+  width: 100%;
+  height: 100%;
+  max-height: 380px;
+}
+
+/* SVG Animating Elements (Hardware Accelerated) */
+#face-group {
+  transform-origin: 500px 290px;
+  transition: transform var(--state-transition) cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+
+/* Eyebrows transform origins (centered on eyes X=345, X=655) */
+#left-eyebrow {
+  transform-origin: 345px 175px;
+  transition: d var(--state-transition) ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), stroke var(--state-transition) ease, filter var(--state-transition) ease;
+}
+#right-eyebrow {
+  transform-origin: 655px 175px;
+  transition: d var(--state-transition) ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), stroke var(--state-transition) ease, filter var(--state-transition) ease;
+}
+
+/* Eye Groups scaling origins (Includes socket, iris, pupil and eyelashes) */
+#left-eye-group {
+  transform-origin: 345px 295px;
+  transition: transform var(--state-transition) cubic-bezier(0.2, 0.8, 0.2, 1), opacity var(--state-transition) ease;
+  will-change: transform;
+}
+#right-eye-group {
+  transform-origin: 655px 295px;
+  transition: transform var(--state-transition) cubic-bezier(0.2, 0.8, 0.2, 1), opacity var(--state-transition) ease;
+  will-change: transform;
+}
+
+#left-eye-container, #right-eye-container {
+  transform-origin: inherit;
+}
+
+#left-iris, #right-iris {
+  transition: fill var(--state-transition) ease;
+}
+
+#left-pupil, #right-pupil {
+  transform-origin: 345px 295px;
+  transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: transform;
+}
+#right-pupil {
+  transform-origin: 655px 295px;
+}
+
+#left-eyelid-arch, #right-eyelid-arch, #left-eyelash-wing, #right-eyelash-wing {
+  transition: stroke var(--state-transition) ease, fill var(--state-transition) ease, filter var(--state-transition) ease;
+}
+
+/* Double Outline Glasses styling transitions */
+#glasses-bridge-glow, #left-lens-glow, #right-lens-glow,
+#glasses-bridge-core, #left-lens-core, #right-lens-core {
+  transition: stroke var(--state-transition) ease, filter var(--state-transition) ease;
+}
+
+#mouth {
+  transform-origin: 500px 440px;
+  transition: d 0.15s ease, stroke var(--state-transition) ease, filter var(--state-transition) ease, transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1.2);
+  will-change: d, transform;
+}
+
+/* Blinking Classes - Dynamic Springy Squash/Stretch Overshoot */
+.blink-active {
+  animation: blink var(--blink-duration) cubic-bezier(0.25, 0.8, 0.25, 1.2) forwards;
+}
+.wink-left {
+  animation: blink var(--blink-duration) cubic-bezier(0.25, 0.8, 0.25, 1.2) forwards;
+}
+.wink-right {
+  animation: blink var(--blink-duration) cubic-bezier(0.25, 0.8, 0.25, 1.2) forwards;
+}
+
+@keyframes blink {
+  0% {
+    transform: scaleY(1);
+  }
+  30% {
+    transform: scaleY(0.02);
+  }
+  65% {
+    transform: scaleY(1.12); /* springy overshoot */
+  }
+  85% {
+    transform: scaleY(0.96);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+/* Brand Display */
+.brand-container {
+  text-align: center;
+  margin-top: 5px;
+  margin-bottom: 15px;
+}
+
+.brand-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 12px;
+  color: #ffffff;
+  text-shadow: 0 0 10px rgba(189, 0, 255, 0.4), 0 0 20px rgba(0, 240, 255, 0.2);
+  background: linear-gradient(90deg, #00f0ff, #bd00ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-indent: 12px;
+}
+
+/* Bottom Subtitle Indicator */
+.bottom-subtitle {
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 5px;
+  color: #00f0ff;
+  opacity: 0.45;
+  text-shadow: 0 0 5px rgba(0, 240, 255, 0.2);
+  margin-top: 10px;
+  text-align: center;
+  text-indent: 5px;
+}
+
+/* ==========================================================================
+   DASHBOARD / CONTROL PANEL (Asymmetric grid with clean columns)
+   ========================================================================== */
+
+.control-panel {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  max-width: 1100px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 0;
+  background: transparent;
+  gap: 6px;
+}
+
+.panel-row-1 {
+  border-bottom: none;
+  padding-bottom: 3px;
+}
+
+.panel-row-2 {
+  border-top: none;
+  padding-top: 3px;
+}
+
+/* Individual status column items structured as buttons */
+.status-btn {
+  flex: 1 1 125px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.01);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 8px 4px;
+  color: rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  outline: none;
+  transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.status-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+  transform: translateY(-1px);
+}
+
+.status-btn.active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Header names inside columns */
+.status-name {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-top: 4px;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+
+/* Small description text inside columns */
+.status-desc {
+  font-family: var(--font-body);
+  font-size: 8px;
+  font-weight: 300;
+  opacity: 0.5;
+  line-height: 1.25;
+  margin-top: 2px;
+  max-width: 120px;
+}
+
+/* Active Highlight Stylings (Core system states) */
+#btn-idle.active { border-color: rgba(0, 240, 255, 0.3); background: rgba(0, 240, 255, 0.05); }
+#btn-idle.active .status-name { color: var(--neon-cyan); text-shadow: 0 0 6px rgba(0, 240, 255, 0.4); }
+
+#btn-listening.active { border-color: rgba(0, 240, 255, 0.3); background: rgba(0, 240, 255, 0.05); }
+#btn-listening.active .status-name { color: var(--neon-cyan); text-shadow: 0 0 6px rgba(0, 240, 255, 0.4); }
+
+#btn-thinking.active { border-color: rgba(0, 240, 255, 0.3); background: rgba(0, 240, 255, 0.05); }
+#btn-thinking.active .status-name { color: var(--neon-cyan); text-shadow: 0 0 6px rgba(0, 240, 255, 0.4); }
+
+#btn-speaking.active { border-color: rgba(189, 0, 255, 0.3); background: rgba(189, 0, 255, 0.05); }
+#btn-speaking.active .status-name { color: var(--neon-purple); text-shadow: 0 0 6px rgba(189, 0, 255, 0.4); }
+
+#btn-alert.active { border-color: rgba(255, 170, 0, 0.3); background: rgba(255, 170, 0, 0.05); }
+#btn-alert.active .status-name { color: var(--neon-amber); text-shadow: 0 0 6px rgba(255, 170, 0, 0.4); }
+
+#btn-sleeping.active { border-color: rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); }
+#btn-sleeping.active .status-name { color: #ffffff; text-shadow: 0 0 6px rgba(255, 255, 255, 0.3); }
+
+/* Active Highlight Stylings (Emotional expression states) */
+#btn-sad.active { border-color: rgba(0, 102, 255, 0.3); background: rgba(0, 102, 255, 0.05); }
+#btn-sad.active .status-name { color: var(--neon-blue); text-shadow: 0 0 6px rgba(0, 102, 255, 0.4); }
+
+#btn-happy.active { border-color: rgba(255, 42, 133, 0.3); background: rgba(255, 42, 133, 0.05); }
+#btn-happy.active .status-name { color: var(--neon-pink); text-shadow: 0 0 6px rgba(255, 42, 133, 0.4); }
+
+#btn-loving.active { border-color: rgba(255, 42, 133, 0.3); background: rgba(255, 42, 133, 0.05); }
+#btn-loving.active .status-name { color: var(--neon-pink); text-shadow: 0 0 6px rgba(255, 42, 133, 0.4); }
+
+#btn-shocked.active { border-color: rgba(0, 240, 255, 0.3); background: rgba(0, 240, 255, 0.05); }
+#btn-shocked.active .status-name { color: var(--neon-cyan); text-shadow: 0 0 6px rgba(0, 240, 255, 0.4); }
+
+#btn-angry.active { border-color: rgba(255, 0, 60, 0.3); background: rgba(255, 0, 60, 0.05); }
+#btn-angry.active .status-name { color: var(--neon-red); text-shadow: 0 0 6px rgba(255, 0, 60, 0.4); }
+
+#btn-mad.active { border-color: rgba(255, 0, 60, 0.4); background: rgba(255, 0, 60, 0.07); }
+#btn-mad.active .status-name { color: var(--neon-red); text-shadow: 0 0 8px rgba(255, 0, 60, 0.5); }
+
+#btn-frustrated.active { border-color: rgba(189, 0, 255, 0.25); background: rgba(189, 0, 255, 0.04); }
+#btn-frustrated.active .status-name { color: var(--neon-purple); text-shadow: 0 0 6px rgba(189, 0, 255, 0.3); }
+
+#btn-silly.active { border-color: rgba(0, 240, 255, 0.3); background: rgba(0, 240, 255, 0.05); }
+#btn-silly.active .status-name { color: var(--neon-cyan); text-shadow: 0 0 6px rgba(0, 240, 255, 0.4); }
+
+#btn-goofy.active { border-color: rgba(189, 0, 255, 0.3); background: rgba(189, 0, 255, 0.05); }
+#btn-goofy.active .status-name { color: var(--neon-purple); text-shadow: 0 0 6px rgba(189, 0, 255, 0.4); }
+
+#btn-exasperated.active { border-color: rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.04); }
+#btn-exasperated.active .status-name { color: #ffffff; text-shadow: 0 0 6px rgba(255, 255, 255, 0.3); }
+
+/* ==========================================================================
+   STATUS ICONS SPECIFICS
+   ========================================================================== */
+
+.status-icon {
+  width: 32px;
+  height: 18px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+}
+
+/* Idle: single dot */
+.icon-idle .dot-core {
+  width: 4px;
+  height: 4px;
+  background-color: var(--neon-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--neon-cyan);
+}
+.icon-idle .ring-pulse {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--neon-cyan);
+  border-radius: 50%;
+  animation: ringPulse 2s ease-out infinite;
+  opacity: 0;
+}
+@keyframes ringPulse {
+  0% { transform: scale(0.4); opacity: 1; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+
+/* Listening: vertical audio waves */
+.icon-listening {
+  gap: 1.5px;
+}
+.icon-listening .bar {
+  width: 1.5px;
+  height: 8px;
+  background-color: var(--neon-cyan);
+  border-radius: 1px;
+}
+#btn-listening.active .bar {
+  animation: listeningBar 1.2s ease-in-out infinite alternate;
+}
+.icon-listening .bar-1 { animation-delay: 0.1s; }
+.icon-listening .bar-2 { animation-delay: 0.4s; height: 13px; }
+.icon-listening .bar-3 { animation-delay: 0.2s; height: 10px; }
+.icon-listening .bar-4 { animation-delay: 0.6s; height: 15px; }
+.icon-listening .bar-5 { animation-delay: 0.3s; }
+
+@keyframes listeningBar {
+  0% { transform: scaleY(0.4); }
+  100% { transform: scaleY(1.4); }
+}
+
+/* Thinking: dotted ring */
+.icon-thinking::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 1.2px dotted var(--neon-cyan);
+  border-radius: 50%;
+}
+#btn-thinking.active .icon-thinking::after {
+  animation: rotating 2s linear infinite;
+}
+@keyframes rotating {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Speaking: speech equalizer wave */
+.icon-speaking {
+  gap: 2px;
+}
+.icon-speaking .sbar {
+  width: 1.5px;
+  height: 8px;
+  background-color: var(--neon-purple);
+  border-radius: 1px;
+}
+#btn-speaking.active .sbar {
+  animation: speakingBar 0.6s ease-in-out infinite alternate;
+}
+.icon-speaking .sbar-1 { animation-delay: 0.05s; }
+.icon-speaking .sbar-2 { animation-delay: 0.25s; height: 13px; }
+.icon-speaking .sbar-3 { animation-delay: 0.1s; height: 16px; }
+.icon-speaking .sbar-4 { animation-delay: 0.35s; height: 11px; }
+.icon-speaking .sbar-5 { animation-delay: 0.15s; }
+
+@keyframes speakingBar {
+  0% { transform: scaleY(0.3); opacity: 0.7; }
+  100% { transform: scaleY(1.6); opacity: 1; }
+}
+
+/* Alert: exclamation symbol */
+.icon-alert {
+  border: 1px solid var(--neon-amber);
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+}
+.icon-alert .alert-excl {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 9px;
+  color: var(--neon-amber);
+  transform: translateY(-0.5px);
+}
+#btn-alert.active .icon-alert {
+  animation: alertFlash 1.5s infinite alternate;
+  box-shadow: 0 0 6px rgba(255, 170, 0, 0.4);
+}
+@keyframes alertFlash {
+  0% { border-color: rgba(255, 170, 0, 0.3); opacity: 0.6; }
+  100% { border-color: var(--neon-amber); opacity: 1; }
+}
+
+/* Sleeping: drifting Zs */
+.icon-sleeping .zzz {
+  position: absolute;
+  font-family: var(--font-display);
+  font-size: 7px;
+  font-weight: 700;
+  color: #ffffff;
+  opacity: 0;
+}
+#btn-sleeping.active .zzz-1 { animation: sleepZ 3s linear infinite; }
+#btn-sleeping.active .zzz-2 { animation: sleepZ 3s linear infinite; animation-delay: 1s; }
+#btn-sleeping.active .zzz-3 { animation: sleepZ 3s linear infinite; animation-delay: 2s; }
+
+@keyframes sleepZ {
+  0% { transform: translate(-3px, 3px) scale(0.6); opacity: 0; }
+  30% { opacity: 0.7; }
+  80% { opacity: 0.4; }
+  100% { transform: translate(4px, -6px) scale(1.1); opacity: 0; }
+}
+
+/* Mock Volume Input Panel (test control — shown only in ?debug, see hero rules) */
+.volume-slider-container {
+  display: flex;
+  position: absolute;
+  bottom: 96px;
+  background: rgba(5, 5, 20, 0.85);
+  border: 1px solid rgba(189, 0, 255, 0.2);
+  border-radius: 8px;
+  padding: 10px 20px;
+  align-items: center;
+  gap: 15px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 1px;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+}
+
+.volume-slider-container label {
+  color: var(--neon-purple);
+  font-weight: 600;
+}
+
+#volume-slider {
+  -webkit-appearance: none;
+  width: 150px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.1);
+  outline: none;
+}
+
+#volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--neon-purple);
+  cursor: pointer;
+  box-shadow: 0 0 6px var(--neon-purple);
+  transition: transform 0.1s;
+}
+
+#volume-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+#volume-val {
+  color: #ffffff;
+  min-width: 30px;
+}
+
+/* ==========================================================================
+   KIOSK HERO VIEW + LIVE STATUS WORDMARK  (integration layer — no animation code)
+   ========================================================================== */
+
+/* Control panels + the mock volume slider are TEST controls, shown ONLY with
+   ?debug (app.js adds body.debug solely when the URL contains ?debug). The
+   default kiosk view (/, no query) is just her face + the MINNIE wordmark.
+   !important so no source rule can resurrect them on the kiosk. */
+.control-panel { display: none !important; }
+body.debug .control-panel { display: flex !important; }
+.volume-slider-container { display: none !important; }
+body.debug .volume-slider-container { display: flex !important; }
+
+/* Tagline removed per request — hero view is JUST her face + the MINNIE wordmark. */
+.bottom-subtitle { display: none !important; }
+
+/* Hero (production) view: she DOMINATES — the cat-eye glasses span ~90% of the
+   width (essentially edge-to-edge) on the 800x480 kiosk. The SVG is intentionally
+   oversized so its empty viewBox margins overflow off-screen; she's centred (brows
+   toward the camera-notch top) with the wordmark below. The particle aura tracks
+   the real face centre in JS (updateFaceMetrics). Debug keeps the smaller layout. */
+body:not(.debug) #face-container {
+  position: absolute;
+  inset: 0;
+  max-height: none;
+  margin: 0;
+  overflow: visible;
+}
+body:not(.debug) #face-svg {
+  position: absolute;
+  left: 50%;
+  top: 37%;              /* sit her high: brows toward the camera-notch top, mouth on-screen */
+  width: 158vw;          /* -> cat-eye glasses ~89% of screen width (dominant, near edge-to-edge) */
+  height: auto;
+  max-height: none;
+  flex: none;
+  transform: translate(-50%, -50%);
+}
+body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; bottom: 3%; margin: 0; z-index: 11; }
+
+/* The wordmark doubles as a live status line: smooth crossfade between the
+   persona name (idle) and what she's doing (active), truncating long status. */
+.brand-text {
+  display: inline-block;
+  max-width: 86vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  transition: opacity 0.18s ease;
+}
+
+/* Reduced motion: neutralise CSS transitions/keyframes (blink, icon pulses,
+   crossfades). Antigravity's rAF physics/particles are left intact per the
+   byte-for-byte directive — this only calms the CSS-driven motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

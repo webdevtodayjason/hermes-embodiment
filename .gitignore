@@ -1,0 +1,29 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtualenvs ---
+venv/
+.venv/
+env/
+
+# --- Active runtime config (NEVER ignore the example or the showcase) ---
+# Root-anchored so it only matches a local dev copy at the repo root.
+# `config.yaml.example` and `examples/minnie/config.yaml` stay tracked.
+/config.yaml
+
+# --- Editor / OS cruft ---
+*.bak
+*.bak*
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# --- Local-only docs assets (e.g. unshared kiosk photos) ---
+/docs/*.local.*

@@ -1,0 +1,45 @@
+# examples/minnie/config.yaml — the shipped EXAMPLE INSTANCE: "Minnie".
+#
+# Persona: feminine, English, warm + intelligent (think Evy Carnahan, The Mummy).
+# Copy to ~/.hermes/plugins/embody/config.yaml to run the plugin as Minnie on
+# this Raspberry Pi (HDMI audio + Pironman LEDs + kiosk). Everything here is just
+# config — the plugin code is fully generic.
+
+persona:
+  name: "Minnie"
+  wake_word: "Hey Minnie"        # reserved for a future STT wave
+
+voice:
+  enabled: true
+  provider: ""                   # "" => inherit Hermes tts.provider (elevenlabs)
+  voice_id: "pFZP5JQG7iQjIQuC4Bku"   # ElevenLabs "Lily" — warm British female (standard premade voice).
+                                 # # Jason to confirm — fits Minnie (warm, English). Alternatives:
+                                 #   "Alice" = Xb7hH8MSUJpSbSDYk0k2 (British female, clear/confident).
+                                 # Set "" to fall back to Hermes' configured voice (currently "Adam", male).
+  speak_on: "post_llm_call"
+
+audio:
+  backend: "pipewire"            # this Pi runs PipeWire; pin to HDMI by sink NAME below
+  device: "alsa_output.platform-107c701400.hdmi.hdmi-stereo"   # HDMI speakers (NOT the default sink)
+
+face:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8830
+  theme: "minnie"                # face-ui applies data-theme="minnie"
+  kiosk:
+    enabled: true                # launch a dedicated kiosk browser at the face URL (deploy-time)
+    user_data_dir: "~/.embody-kiosk"
+    command: ""                  # "" => auto-build chromium --kiosk --app=http://127.0.0.1:8830/
+
+leds:
+  backend: "pironman"            # this Pi has a Pironman; active iff `pironman5` is on PATH
+  brightness: 60
+  states:
+    idle:     { color: "1E3A5F", style: "breathing" }
+    thinking: { color: "FFB000", style: "flow" }
+    working:  { color: "8000FF", style: "solid" }
+    speaking: { color: "00C853", style: "flow" }
+
+oled:
+  backend: "auto"

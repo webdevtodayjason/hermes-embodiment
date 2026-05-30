@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MINNIE - AI Face Kiosk</title>
+  <!-- Offline system-font stack — no CDN, fully self-contained for the kiosk -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Layer 1: Background & Layer 2: Particle Aura Canvas -->
+  <div class="background-glow" id="bg-glow"></div>
+  <canvas id="particle-canvas"></canvas>
+
+  <div class="kiosk-container">
+    <!-- Center Face Container (SVG Layers 3-7) -->
+    <div id="face-container">
+      <svg id="face-svg" viewBox="0 0 1000 580" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <!-- Glowing Drop Shadow Filters for Holographic Neon Look -->
+          <!-- Fine glow for thin lines -->
+          <filter id="neon-glow-cyan" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="2" result="blur1" />
+            <feGaussianBlur stdDeviation="5" result="blur2" />
+            <feMerge>
+              <feMergeNode in="blur2" />
+              <feMergeNode in="blur1" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+
+          <!-- Thick purple aura glow -->
+          <filter id="neon-glow-purple" x="-45%" y="-45%" width="190%" height="190%">
+            <feGaussianBlur stdDeviation="4.5" result="blur1" />
+            <feGaussianBlur stdDeviation="11" result="blur2" />
+            <feMerge>
+              <feMergeNode in="blur2" />
+              <feMergeNode in="blur1" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+
+          <!-- Amber alert glow -->
+          <filter id="neon-glow-amber" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="3.5" result="blur1" />
+            <feGaussianBlur stdDeviation="10" result="blur2" />
+            <feMerge>
+              <feMergeNode in="blur2" />
+              <feMergeNode in="blur1" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+
+          <!-- Hot red anger glow -->
+          <filter id="neon-glow-red" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="3.5" result="blur1" />
+            <feGaussianBlur stdDeviation="11" result="blur2" />
+            <feMerge>
+              <feMergeNode in="blur2" />
+              <feMergeNode in="blur1" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+
+          <!-- Almond Eye Clips to prevent perfectly round eyes -->
+          <clipPath id="left-eye-clip">
+            <path d="M 285 272 C 300 238, 365 238, 395 272 C 395 272, 385 328, 345 328 C 305 328, 285 295, 285 272 Z" />
+          </clipPath>
+          
+          <clipPath id="right-eye-clip">
+            <path d="M 715 272 C 700 238, 635 238, 605 272 C 605 272, 615 328, 655 328 C 695 328, 715 295, 715 272 Z" />
+          </clipPath>
+
+          <!-- 3D Glass Look Iris Glowing Gradients (Shifted down for lower crescent glow) -->
+          <radialGradient id="iris-gradient-left" cx="50%" cy="75%" r="55%" fx="50%" fy="75%">
+            <stop offset="0%" stop-color="#00ffff" />
+            <stop offset="35%" stop-color="#0066ff" stop-opacity="0.9" />
+            <stop offset="75%" stop-color="#030325" stop-opacity="0.5" />
+            <stop offset="100%" stop-color="#010108" stop-opacity="0.2" />
+          </radialGradient>
+          
+          <radialGradient id="iris-gradient-right" cx="50%" cy="75%" r="55%" fx="50%" fy="75%">
+            <stop offset="0%" stop-color="#00ffff" />
+            <stop offset="35%" stop-color="#0066ff" stop-opacity="0.9" />
+            <stop offset="75%" stop-color="#030325" stop-opacity="0.5" />
+            <stop offset="100%" stop-color="#010108" stop-opacity="0.2" />
+          </radialGradient>
+          
+          <radialGradient id="iris-gradient-alert" cx="50%" cy="75%" r="55%" fx="50%" fy="75%">
+            <stop offset="0%" stop-color="#ffcc00" />
+            <stop offset="40%" stop-color="#ff3300" stop-opacity="0.9" />
+            <stop offset="80%" stop-color="#250303" stop-opacity="0.5" />
+            <stop offset="100%" stop-color="#010108" stop-opacity="0.2" />
+          </radialGradient>
+
+          <!-- Red Iris Gradient for anger/madness -->
+          <radialGradient id="iris-gradient-red" cx="50%" cy="75%" r="55%" fx="50%" fy="75%">
+            <stop offset="0%" stop-color="#ff3300" />
+            <stop offset="40%" stop-color="#cc0000" stop-opacity="0.9" />
+            <stop offset="80%" stop-color="#300303" stop-opacity="0.5" />
+            <stop offset="100%" stop-color="#010108" stop-opacity="0.2" />
+          </radialGradient>
+
+          <!-- Multi-stop color gradients for artistic color/brightness variations -->
+          <!-- 1. Inner Neon Core Gradient -->
+          <linearGradient id="glasses-gradient-core" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#ffffff" /> <!-- white hot tips -->
+            <stop offset="5%" stop-color="#e024ff" /> <!-- purple wing -->
+            <stop offset="25%" stop-color="#7000ff" /> <!-- blue-purple -->
+            <stop offset="42%" stop-color="#0088ff" /> <!-- cyan-blue -->
+            <stop offset="50%" stop-color="#00f0ff" /> <!-- bright cyan bridge -->
+            <stop offset="58%" stop-color="#0088ff" />
+            <stop offset="75%" stop-color="#7000ff" />
+            <stop offset="95%" stop-color="#e024ff" />
+            <stop offset="100%" stop-color="#ffffff" />
+          </linearGradient>
+
+          <!-- 2. Outer Glow Gradient -->
+          <linearGradient id="glasses-gradient-glow" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#bd00ff" />
+            <stop offset="20%" stop-color="#5500ff" />
+            <stop offset="40%" stop-color="#0066ff" />
+            <stop offset="50%" stop-color="#00d2ff" />
+            <stop offset="60%" stop-color="#0066ff" />
+            <stop offset="80%" stop-color="#5500ff" />
+            <stop offset="100%" stop-color="#bd00ff" />
+          </linearGradient>
+
+          <!-- Amber gradient fallback for alert -->
+          <linearGradient id="glasses-gradient-alert-core" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="8%" stop-color="#ffaa00" />
+            <stop offset="50%" stop-color="#ff3300" />
+            <stop offset="92%" stop-color="#ffaa00" />
+            <stop offset="100%" stop-color="#ffffff" />
+          </linearGradient>
+
+          <linearGradient id="glasses-gradient-alert-glow" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#ffaa00" />
+            <stop offset="50%" stop-color="#ff3300" />
+            <stop offset="100%" stop-color="#ffaa00" />
+          </linearGradient>
+
+          <!-- Blazing hot red gradient for mad/angry states -->
+          <linearGradient id="glasses-gradient-red-core" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="8%" stop-color="#ff0055" />
+            <stop offset="50%" stop-color="#ff0000" />
+            <stop offset="92%" stop-color="#ff0055" />
+            <stop offset="100%" stop-color="#ffffff" />
+          </linearGradient>
+
+          <linearGradient id="glasses-gradient-red-glow" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#ff0055" />
+            <stop offset="50%" stop-color="#b30000" />
+            <stop offset="100%" stop-color="#ff0055" />
+          </linearGradient>
+        </defs>
+
+        <!-- Entire Face Group (Layer 3-7) -->
+        <g id="face-group">
+          
+          <!-- Layer 6: Eyebrows -->
+          <g id="eyebrows">
+            <!-- Left Eyebrow -->
+            <path id="left-eyebrow" d="M 290 160 Q 345 125 400 160" 
+                  fill="none" stroke="#bd00ff" stroke-width="3" stroke-linecap="round" filter="url(#neon-glow-purple)" />
+            <!-- Right Eyebrow -->
+            <path id="right-eyebrow" d="M 600 160 Q 655 125 710 160" 
+                  fill="none" stroke="#bd00ff" stroke-width="3" stroke-linecap="round" filter="url(#neon-glow-purple)" />
+          </g>
+
+          <!-- Layer 4: Eye Outlines & Pupils (Clipped into almond shape) -->
+          <g id="eyes">
+            <!-- Left Eye Group (Includes eyelashes and socket) -->
+            <g id="left-eye-group" class="eye-group">
+              <!-- Left Eye Base, Iris & Pupil (Centered at X=345, Y=295) -->
+              <g id="left-eye-container" class="eye-container" clip-path="url(#left-eye-clip)">
+                <!-- Iris Glow -->
+                <circle id="left-iris" cx="345" cy="295" r="66" fill="url(#iris-gradient-left)" />
+                <!-- Cybernetic details inside Left Iris -->
+                <circle cx="345" cy="295" r="57" fill="none" stroke="#00f0ff" stroke-width="0.8" stroke-dasharray="4 8 2 8" opacity="0.3" />
+                <circle cx="345" cy="295" r="48" fill="none" stroke="#bd00ff" stroke-width="0.8" stroke-dasharray="10 10" opacity="0.25" />
+                
+                <!-- Left Pupil -->
+                <g id="left-pupil" class="pupil">
+                  <circle cx="345" cy="295" r="33" fill="#010106" stroke="#00f0ff" stroke-width="1.5" />
+                  <circle cx="345" cy="295" r="23" fill="none" stroke="#00f0ff" stroke-width="0.8" opacity="0.4" />
+                  <circle id="left-pupil-hl1" cx="330" cy="280" r="10" fill="#ffffff" opacity="0.95" />
+                  <circle id="left-pupil-hl2" cx="360" cy="305" r="5" fill="#ffffff" opacity="0.75" />
+                </g>
+              </g>
+
+              <!-- Left Eyelash/Eyelid Arch -->
+              <path id="left-eyelid-arch" d="M 292 272 C 304 240, 365 240, 395 272" 
+                    fill="none" stroke="#bd00ff" stroke-width="3" stroke-linecap="round" filter="url(#neon-glow-purple)" />
+              <!-- Upper wing lash tip -->
+              <path id="left-eyelash-wing" d="M 294 270 C 280 262, 268 266, 260 274 C 274 273, 287 271, 294 270 Z" fill="#bd00ff" filter="url(#neon-glow-purple)" />
+            </g>
+
+            <!-- Right Eye Group (Includes eyelashes and socket) -->
+            <g id="right-eye-group" class="eye-group">
+              <!-- Right Eye Base, Iris & Pupil (Centered at X=655, Y=295) -->
+              <g id="right-eye-container" class="eye-container" clip-path="url(#right-eye-clip)">
+                <!-- Iris Glow -->
+                <circle id="right-iris" cx="655" cy="295" r="66" fill="url(#iris-gradient-right)" />
+                <!-- Cybernetic details -->
+                <circle cx="655" cy="295" r="57" fill="none" stroke="#00f0ff" stroke-width="0.8" stroke-dasharray="4 8 2 8" opacity="0.3" />
+                <circle cx="655" cy="295" r="48" fill="none" stroke="#bd00ff" stroke-width="0.8" stroke-dasharray="10 10" opacity="0.25" />
+                
+                <!-- Right Pupil -->
+                <g id="right-pupil" class="pupil">
+                  <circle cx="655" cy="295" r="33" fill="#010106" stroke="#00f0ff" stroke-width="1.5" />
+                  <circle cx="655" cy="295" r="23" fill="none" stroke="#00f0ff" stroke-width="0.8" opacity="0.4" />
+                  <circle id="right-pupil-hl1" cx="640" cy="280" r="10" fill="#ffffff" opacity="0.95" />
+                  <circle id="right-pupil-hl2" cx="670" cy="305" r="5" fill="#ffffff" opacity="0.75" />
+                </g>
+              </g>
+
+              <!-- Right Eyelash/Eyelid Arch -->
+              <path id="right-eyelid-arch" d="M 708 272 C 696 240, 635 240, 605 272" 
+                    fill="none" stroke="#bd00ff" stroke-width="3" stroke-linecap="round" filter="url(#neon-glow-purple)" />
+              <!-- Upper wing lash tip -->
+              <path id="right-eyelash-wing" d="M 706 270 C 720 262, 732 266, 740 274 C 726 273, 713 271, 706 270 Z" fill="#bd00ff" filter="url(#neon-glow-purple)" />
+            </g>
+          </g>
+
+          <!-- Layer 3: Cat-Eye Glasses -->
+          <g id="glasses">
+            <!-- 1. THICK PURPLE/BLUE GLOW LAYER -->
+            <!-- Bridge -->
+            <path id="glasses-bridge-glow" d="M 470 305 C 490 297, 510 297, 530 305" 
+                  fill="none" stroke="url(#glasses-gradient-glow)" stroke-width="5" stroke-linecap="round" filter="url(#neon-glow-purple)" />
+            <!-- Left Lens Outer Rim -->
+            <path id="left-lens-glow" d="M 470 305 C 430 255, 340 198, 220 200 C 195 240, 270 365, 360 365 C 420 365, 460 335, 470 305 Z" 
+                  fill="none" stroke="url(#glasses-gradient-glow)" stroke-width="5.5" filter="url(#neon-glow-purple)" />
+            <!-- Right Lens Outer Rim -->
+            <path id="right-lens-glow" d="M 530 305 C 570 255, 660 198, 780 200 C 805 240, 730 365, 640 365 C 580 365, 540 335, 530 305 Z" 
+                  fill="none" stroke="url(#glasses-gradient-glow)" stroke-width="5.5" filter="url(#neon-glow-purple)" />
+
+            <!-- 2. THIN CYAN/WHITE CORE LAYER -->
+            <!-- Bridge Core -->
+            <path id="glasses-bridge-core" d="M 470 305 C 490 297, 510 297, 530 305" 
+                  fill="none" stroke="url(#glasses-gradient-core)" stroke-width="2" stroke-linecap="round" filter="url(#neon-glow-cyan)" />
+            <!-- Left Lens Core -->
+            <path id="left-lens-core" d="M 470 305 C 430 255, 340 198, 220 200 C 195 240, 270 365, 360 365 C 420 365, 460 335, 470 305 Z" 
+                  fill="none" stroke="url(#glasses-gradient-core)" stroke-width="2" filter="url(#neon-glow-cyan)" />
+            <!-- Right Lens Core -->
+            <path id="right-lens-core" d="M 530 305 C 570 255, 660 198, 780 200 C 805 240, 730 365, 640 365 C 580 365, 540 335, 530 305 Z" 
+                  fill="none" stroke="url(#glasses-gradient-core)" stroke-width="2" filter="url(#neon-glow-cyan)" />
+
+            <!-- Three glowing dot accents on left wing tip -->
+            <circle cx="232" cy="207" r="3.2" fill="#ffffff" filter="url(#neon-glow-cyan)" />
+            <circle cx="243" cy="205" r="2.5" fill="#ffffff" filter="url(#neon-glow-cyan)" />
+            <circle cx="254" cy="203" r="1.8" fill="#ffffff" filter="url(#neon-glow-cyan)" />
+
+            <!-- Three glowing dot accents on right wing tip -->
+            <circle cx="768" cy="207" r="3.2" fill="#ffffff" filter="url(#neon-glow-cyan)" />
+            <circle cx="757" cy="205" r="2.5" fill="#ffffff" filter="url(#neon-glow-cyan)" />
+            <circle cx="746" cy="203" r="1.8" fill="#ffffff" filter="url(#neon-glow-cyan)" />
+          </g>
+
+          <!-- Layer 7: Mouth -->
+          <g id="mouth-group">
+            <path id="mouth" d="M 475 440 Q 500 455 525 440" 
+                  fill="none" stroke="#bd00ff" stroke-width="3" stroke-linecap="round" filter="url(#neon-glow-purple)" />
+          </g>
+          
+        </g>
+      </svg>
+    </div>
+
+    <!-- Title and Brand -->
+    <div class="brand-container">
+      <h1 class="brand-title" id="brand-title">· <span class="brand-text" id="persona-name">MINNIE</span> ·</h1>
+    </div>
+
+    <!-- Layer 8: Status Bar Dashboard - CORE SYSTEM STATES (Row 1) -->
+    <div class="control-panel panel-row-1">
+      <!-- IDLE -->
+      <button class="status-btn active" id="btn-idle" onclick="changeState('idle')">
+        <div class="status-icon icon-idle">
+          <div class="dot-core"></div>
+          <div class="ring-pulse"></div>
+        </div>
+        <span class="status-name">· IDLE</span>
+        <span class="status-desc">Relaxed drift & breathing</span>
+      </button>
+
+      <!-- LISTENING -->
+      <button class="status-btn" id="btn-listening" onclick="changeState('listening')">
+        <div class="status-icon icon-listening">
+          <span class="bar bar-1"></span>
+          <span class="bar bar-2"></span>
+          <span class="bar bar-3"></span>
+          <span class="bar bar-4"></span>
+          <span class="bar bar-5"></span>
+        </div>
+        <span class="status-name">LISTENING</span>
+        <span class="status-desc">Eyes widen, pull inward</span>
+      </button>
+
+      <!-- THINKING -->
+      <button class="status-btn" id="btn-thinking" onclick="changeState('thinking')">
+        <div class="status-icon icon-thinking">
+          <div class="orbiting-circle"></div>
+        </div>
+        <span class="status-name">THINKING</span>
+        <span class="status-desc">Eyes look up, orbit aura</span>
+      </button>
+
+      <!-- SPEAKING -->
+      <button class="status-btn" id="btn-speaking" onclick="changeState('speaking')">
+        <div class="status-icon icon-speaking">
+          <span class="sbar sbar-1"></span>
+          <span class="sbar sbar-2"></span>
+          <span class="sbar sbar-3"></span>
+          <span class="sbar sbar-4"></span>
+          <span class="sbar sbar-5"></span>
+        </div>
+        <span class="status-name">SPEAKING</span>
+        <span class="status-desc">Mouth & aura bounce</span>
+      </button>
+
+      <!-- ALERT -->
+      <button class="status-btn" id="btn-alert" onclick="changeState('alert')">
+        <div class="status-icon icon-alert">
+          <span class="alert-excl">!</span>
+        </div>
+        <span class="status-name">ALERT</span>
+        <span class="status-desc">Amber glow, narrow eyes</span>
+      </button>
+      
+      <!-- SLEEPING -->
+      <button class="status-btn" id="btn-sleeping" onclick="changeState('sleeping')">
+        <div class="status-icon icon-sleeping">
+          <span class="zzz zzz-1">Z</span>
+          <span class="zzz zzz-2">Z</span>
+          <span class="zzz zzz-3">Z</span>
+        </div>
+        <span class="status-name">SLEEPING</span>
+        <span class="status-desc">Eyes closed, slow breathing</span>
+      </button>
+    </div>
+
+    <!-- EMOTIONAL EXPRESSIONS ROW (Row 2) -->
+    <div class="control-panel panel-row-2">
+      <!-- SAD -->
+      <button class="status-btn" id="btn-sad" onclick="changeState('sad')">
+        <span class="status-name">SAD</span>
+        <span class="status-desc">Droopy eyes, tear aura</span>
+      </button>
+
+      <!-- HAPPY -->
+      <button class="status-btn" id="btn-happy" onclick="changeState('happy')">
+        <span class="status-name">HAPPY</span>
+        <span class="status-desc">Wide glowing warm smile</span>
+      </button>
+
+      <!-- LOVING -->
+      <button class="status-btn" id="btn-loving" onclick="changeState('loving')">
+        <span class="status-name">LOVING</span>
+        <span class="status-desc">Gentle pink eyes & heart aura</span>
+      </button>
+
+      <!-- SHOCKED -->
+      <button class="status-btn" id="btn-shocked" onclick="changeState('shocked')">
+        <span class="status-name">SHOCKED</span>
+        <span class="status-desc">Wide eyes, contracted pupils</span>
+      </button>
+
+      <!-- ANGRY -->
+      <button class="status-btn" id="btn-angry" onclick="changeState('angry')">
+        <span class="status-name">ANGRY</span>
+        <span class="status-desc">Pink/Red glow, slanted brows</span>
+      </button>
+
+      <!-- MAD -->
+      <button class="status-btn" id="btn-mad" onclick="changeState('mad')">
+        <span class="status-name">MAD</span>
+        <span class="status-desc">Aggressive red flash, growl</span>
+      </button>
+
+      <!-- FRUSTRATED -->
+      <button class="status-btn" id="btn-frustrated" onclick="changeState('frustrated')">
+        <span class="status-name">FRUSTRATED</span>
+        <span class="status-desc">Asymmetric brows, squiggle mouth</span>
+      </button>
+
+      <!-- SILLY -->
+      <button class="status-btn" id="btn-silly" onclick="changeState('silly')">
+        <span class="status-name">SILLY</span>
+        <span class="status-desc">Off-center smirk, wink look</span>
+      </button>
+
+      <!-- GOOFY -->
+      <button class="status-btn" id="btn-goofy" onclick="changeState('goofy')">
+        <span class="status-name">GOOFY</span>
+        <span class="status-desc">Crossed pupils, wide smile</span>
+      </button>
+
+      <!-- EXASPERATED -->
+      <button class="status-btn" id="btn-exasperated" onclick="changeState('exasperated')">
+        <span class="status-name">EXASPERATED</span>
+        <span class="status-desc">Eyes roll, dropping energy</span>
+      </button>
+    </div>
+
+    <!-- Tagline removed per request — hero view is ONLY her face + the MINNIE wordmark. -->
+
+    <!-- Hidden slider -->
+    <div class="volume-slider-container" id="volume-test-panel">
+      <label for="volume-slider">MOCK VOLUME INPUT:</label>
+      <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="0.5">
+      <span id="volume-val">0.50</span>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

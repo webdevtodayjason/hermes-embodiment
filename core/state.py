@@ -7,11 +7,18 @@ agent.
 
 Endpoints
 ---------
-  GET /            -> the face page (static files from the sibling ``face/`` dir;
-                      an in-memory fallback page if face/ isn't built yet)
-  GET /events      -> Server-Sent-Events stream of state changes
-  GET /state.json  -> current state (poll fallback)
-  GET /config      -> persona/theme JSON for the face-ui (see below)
+  GET /                   -> the face page (static files from the sibling ``face/``
+                             dir; an in-memory fallback page if face/ isn't built)
+  GET /events             -> Server-Sent-Events stream of state changes
+  GET /state.json         -> current state (poll fallback)
+  GET /config             -> persona/theme JSON for the face-ui (see below)
+  GET  /control/state     -> touch-panel readback {brightness, volume, listening}
+  POST /control/brightness {"value":0-100}        -> set panel backlight
+  POST /control/volume     {"value":0-150}        -> set default-sink volume
+  POST /control/ptt        {"action":"start|stop"} -> push-to-talk (listening/idle)
+
+  The /control/* surface is the kiosk's hardware control panel; all device access
+  is isolated in ``embody.core.controls`` (best-effort, no-op off-Pi, never raises).
 
 Contracts (must match the other workers exactly)
 -------------------------------------------------
@@ -40,6 +47,8 @@ import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from . import controls as _controls   # touch-panel hardware surface (no-op off-Pi)
 
 VALID_STATES = ("idle", "thinking", "working", "speaking", "listening")
 
@@ -303,6 +312,53 @@ def _decay_to_neutral() -> None:
     set_mood("neutral")
 
 
+# --- /control/* handlers (touch panel) ---------------------------------------
+# Each takes the parsed JSON body and returns a JSON-able dict, or an
+# (dict, status) tuple to override the 200. Validation/clamping lives here; the
+# actual hardware exec lives in core.controls (best-effort, no-op off-Pi).
+def _validate_pct(value, lo: int, hi: int):
+    """Coerce ``value`` to an int clamped to [lo, hi]; None if non-numeric (so the
+    caller can 400 a malformed request instead of silently writing a default)."""
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return max(lo, min(hi, n))
+
+
+def _ctl_brightness(body: dict):
+    pct = _validate_pct(body.get("value"), 0, 100)
+    if pct is None:
+        return {"ok": False, "error": "value must be a number in 0-100"}, 400
+    return {"ok": True, "brightness": _controls.set_brightness(pct)}
+
+
+def _ctl_volume(body: dict):
+    pct = _validate_pct(body.get("value"), 0, 150)
+    if pct is None:
+        return {"ok": False, "error": "value must be a number in 0-150"}, 400
+    return {"ok": True, "volume": _controls.set_volume(pct)}
+
+
+def _ctl_ptt(body: dict):
+    action = str(body.get("action", "")).strip().lower()
+    if action == "start":
+        set_state("listening")
+    elif action == "stop":
+        set_state("idle")
+    else:
+        return {"ok": False, "error": "action must be 'start' or 'stop'"}, 400
+    _controls.ptt(action)   # optional future-voice-loop seam (no-op by default)
+    return {"ok": True, "listening": current_state() == "listening"}
+
+
+def _control_readback() -> dict:
+    """GET /control/state: {brightness, volume, listening}. Never raises."""
+    st = _controls.read_state()        # {brightness, volume} (mood-agnostic hw read)
+    st["listening"] = current_state() == "listening"
+    return st
+
+
 def _broadcast(data_str: str) -> None:
     with _subscribers_lock:
         subs = list(_subscribers)
@@ -384,21 +440,71 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(snapshot())
         elif path == "/config":
             self._send_json(config_payload())
+        elif path == "/control/state":
+            self._send_json(_control_readback())
         elif path in ("", "/"):
             self._serve_static("index.html")
         else:
             self._serve_static(path.lstrip("/"))
 
-    # --- JSON helper ---------------------------------------------------------
-    def _send_json(self, obj):
+    def do_POST(self):  # noqa: N802 (stdlib naming)
+        """Touch-panel control surface. JSON in/out; validates + clamps; never
+        raises — any failure returns a 500 JSON and keeps the server alive."""
+        path = urllib.parse.urlparse(self.path).path
+        handler = {
+            "/control/brightness": _ctl_brightness,
+            "/control/volume":     _ctl_volume,
+            "/control/ptt":        _ctl_ptt,
+        }.get(path)
+        if handler is None:
+            self.send_error(404, "Not Found")
+            return
+        try:
+            body = self._read_json_body()
+            result = handler(body)
+            status = 200
+            if isinstance(result, tuple):     # handler may return (obj, status)
+                result, status = result
+            self._send_json(result, status)
+        except Exception as exc:  # pragma: no cover - belt-and-suspenders, never die
+            _warn(f"POST {path} failed: {exc}")
+            try:
+                self._send_json({"ok": False, "error": str(exc)}, 500)
+            except Exception:
+                pass
+
+    def do_OPTIONS(self):  # noqa: N802 (CORS preflight for browser JSON POSTs)
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    # --- JSON helpers --------------------------------------------------------
+    def _send_json(self, obj, status: int = 200):
         body = json.dumps(obj).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    def _read_json_body(self) -> dict:
+        """Parse the request body as a JSON object. {} on missing/malformed body."""
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            return {}
+        if length <= 0:
+            return {}
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, OSError):
+            return {}
+        return data if isinstance(data, dict) else {}
 
     # --- /events (SSE) -------------------------------------------------------
     def _handle_events(self):

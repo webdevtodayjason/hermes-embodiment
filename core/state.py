@@ -16,6 +16,7 @@ Endpoints
   POST /control/brightness {"value":0-100}        -> set panel backlight
   POST /control/volume     {"value":0-150}        -> set default-sink volume
   POST /control/ptt        {"action":"start|stop"} -> push-to-talk (listening/idle)
+  POST /control/mood       {"value":"<mood>"[,"ttl":<s>]} -> set gateway mood (touch reactions/testing)
 
   The /control/* surface is the kiosk's hardware control panel; all device access
   is isolated in ``embody.core.controls`` (best-effort, no-op off-Pi, never raises).
@@ -131,7 +132,7 @@ def set_state(name: str, status=None) -> str:
     return name
 
 
-def set_mood(mood: str) -> str:
+def set_mood(mood: str, hold=None) -> str:
     """Set the embodiment MOOD: push it to the face (SSE) and to every backend.
 
     Mood is the persona's *feeling* and is INDEPENDENT of the activity STATE — it
@@ -143,6 +144,12 @@ def set_mood(mood: str) -> str:
     (``{"state", "status", "mood"}``) so a face only ever needs one event shape.
     Backends are driven via ``on_mood(mood, cfg)`` — best-effort, exactly like
     ``on_state``. Returns the mood actually applied (post-coercion).
+
+    ``hold`` is an OPTIONAL per-call decay override (seconds): when None (the
+    default — every existing caller), the decay timer uses the configured
+    ``face.mood_hold``; when given, THIS mood reverts to neutral after ``hold``
+    seconds instead (``hold <= 0`` = no auto-revert, mood persists until the next
+    set_mood). Backward-compatible: the signature only grows a defaulted kwarg.
 
     Safe to call before the server starts and with zero subscribers/backends.
     """
@@ -165,8 +172,8 @@ def set_mood(mood: str) -> str:
         except Exception as exc:  # pragma: no cover - defensive
             _warn(f"backend {getattr(backend, 'name', '?')}.on_mood({mood!r}) failed: {exc}")
 
-    # 3) (re)arm the decay-to-neutral timer so a one-off reaction fades
-    _arm_mood_decay(mood)
+    # 3) (re)arm the decay-to-neutral timer so a one-off reaction fades (hold override)
+    _arm_mood_decay(mood, hold)
 
     return mood
 
@@ -278,13 +285,15 @@ def _mood_hold_seconds() -> float:
         return 8.0
 
 
-def _arm_mood_decay(mood: str) -> None:
+def _arm_mood_decay(mood: str, hold=None) -> None:
     """(Re)arm the decay timer that reverts the mood to "neutral".
 
     Cancels any pending timer first (newest mood wins), then — for a non-neutral
-    mood with a positive hold — starts a fresh daemon ``threading.Timer``. Setting
-    "neutral" simply disarms (no timer armed). Best-effort: a timer failure is
-    swallowed so a mood set can never crash a turn. Daemon => never blocks exit.
+    mood with a positive hold — starts a fresh daemon ``threading.Timer``. ``hold``
+    overrides the configured ``face.mood_hold`` for this set (None => use config);
+    ``hold <= 0`` disarms (mood persists until the next set_mood). Setting
+    "neutral" simply disarms. Best-effort: a timer failure is swallowed so a mood
+    set can never crash a turn. Daemon => never blocks exit.
     """
     global _mood_timer
     with _mood_timer_lock:
@@ -293,11 +302,11 @@ def _arm_mood_decay(mood: str) -> None:
             _mood_timer = None
         if mood == "neutral":
             return
-        hold = _mood_hold_seconds()
-        if hold <= 0:
+        seconds = _mood_hold_seconds() if hold is None else hold
+        if seconds <= 0:
             return
         try:
-            timer = threading.Timer(hold, _decay_to_neutral)
+            timer = threading.Timer(seconds, _decay_to_neutral)
             timer.daemon = True
             _mood_timer = timer
             timer.start()
@@ -350,6 +359,31 @@ def _ctl_ptt(body: dict):
         return {"ok": False, "error": "action must be 'start' or 'stop'"}, 400
     _controls.ptt(action)   # optional future-voice-loop seam (no-op by default)
     return {"ok": True, "listening": current_state() == "listening"}
+
+
+def _ctl_mood(body: dict):
+    # Drives the GATEWAY mood (-> LEDs + SSE -> every connected face syncs). An
+    # unknown mood string is coerced to neutral by set_mood (not a 400); only a
+    # missing/non-string value is rejected. Optional `ttl` overrides the decay hold.
+    value = body.get("value")
+    if not isinstance(value, str) or not value.strip():
+        return {"ok": False, "error": "value must be a mood name (string)"}, 400
+    hold = _validate_ttl(body.get("ttl"))   # None if absent/invalid -> default mood_hold
+    resolved = set_mood(value.strip().lower(), hold=hold)
+    return {"ok": True, "mood": resolved}
+
+
+def _validate_ttl(value):
+    """Coerce an optional decay-hold override to a float in [0, 3600]; None if
+    absent/non-numeric (caller then uses the configured face.mood_hold). 0 = the
+    mood persists (no auto-revert) until the next set_mood."""
+    if value is None:
+        return None
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(3600.0, n))
 
 
 def _control_readback() -> dict:
@@ -455,6 +489,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/control/brightness": _ctl_brightness,
             "/control/volume":     _ctl_volume,
             "/control/ptt":        _ctl_ptt,
+            "/control/mood":       _ctl_mood,
         }.get(path)
         if handler is None:
             self.send_error(404, "Not Found")

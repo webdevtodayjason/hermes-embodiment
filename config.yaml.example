@@ -18,6 +18,10 @@ voice:
   provider: ""                 # "" => inherit Hermes tts.provider (currently elevenlabs)
   voice_id: ""                 # "" => inherit Hermes tts.elevenlabs.voice_id (currently "Adam")
   speak_on: "post_llm_call"    # which hook drives speech (advanced; first-light = post_llm_call)
+  stream:                      # STREAMING TTS: she starts talking in ~hundreds of ms (ElevenLabs only)
+    enabled: true              # false => always synth the whole reply, then play (the fallback path)
+    model_id: "eleven_flash_v2_5"   # low-latency ElevenLabs streaming model
+    sample_rate: 24000         # pcm_24000 (s16le mono); per-chunk RMS drives the live mouth via /events
 
 audio:
   backend: "auto"              # auto | pipewire | alsa | hermes-default | off

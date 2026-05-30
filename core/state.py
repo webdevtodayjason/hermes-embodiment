@@ -195,6 +195,23 @@ def snapshot() -> dict:
         return {"state": _current_state, "status": _current_status, "mood": _current_mood}
 
 
+def broadcast_volume(volume: float) -> None:
+    """Push a live speech-volume frame (0.0–1.0) to the face over the ``/events``
+    SSE for real-time mouth/particle sync during streaming TTS.
+
+    A volume-only frame (``{"volume": …}``, no state/status/mood) is harmless: the
+    face reads ``data.volume`` independently and leaves state/mood untouched. NOT
+    stored in snapshot() — it's a transient render signal, not persistent state.
+    Best-effort; never raises; coerces/clamps out-of-range or non-numeric input.
+    """
+    try:
+        v = float(volume)
+    except (TypeError, ValueError):
+        return
+    v = max(0.0, min(1.0, v))
+    _broadcast(json.dumps({"volume": v}))
+
+
 def start_server() -> "StateServer":
     """Start the daemon-thread state server (idempotent). Host/port come from config."""
     global _server

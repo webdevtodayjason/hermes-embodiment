@@ -34,6 +34,11 @@ DEFAULTS = {
         "provider": "",            # "" => inherit Hermes tts.provider
         "voice_id": "",            # "" => inherit Hermes voice
         "speak_on": "post_llm_call",
+        "stream": {                # progressive playback: first audio in ~hundreds of ms (ElevenLabs only)
+            "enabled": True,       # false => always full-synth-then-play
+            "model_id": "eleven_flash_v2_5",  # low-latency streaming model
+            "sample_rate": 24000,  # pcm_24000 => s16le mono; also drives live-mouth volume frames
+        },
     },
     "audio": {
         "backend": "auto",         # auto | pipewire | alsa | hermes-default | off

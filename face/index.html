@@ -273,16 +273,23 @@
                where regions overlap. Reactions are wired in app.js (FaceTouch).
                'forehead' is the visible brow band above her eyes — the kiosk crop
                pushes her true forehead off the top edge. -->
+          <!-- Coordinates chosen for the KIOSK HERO CROP, not the full viewBox:
+               the 158vw/top:37% hero view pushes her brow band off the top edge
+               and the cat-eye wing-tips into the screen corners, so zones are
+               placed within the on-screen band (≈viewBox x[210,790] y[245,500])
+               where her features actually render. Verified reachable via
+               elementFromPoint. Document order = hit priority (eyes/nose last,
+               so they win where they overlap glasses/forehead). -->
           <g id="face-touch-zones" pointer-events="all" fill="#000" fill-opacity="0">
-            <rect id="fz-forehead" x="300" y="158" width="400" height="72" pointer-events="all" fill-opacity="0"/>
-            <rect id="fz-glasses-bridge" x="455" y="286" width="90" height="44" pointer-events="all" fill-opacity="0"/>
-            <circle id="fz-glasses-left" cx="255" cy="214" r="44" pointer-events="all" fill-opacity="0"/>
-            <circle id="fz-glasses-right" cx="745" cy="214" r="44" pointer-events="all" fill-opacity="0"/>
-            <circle id="fz-cheek-left" cx="305" cy="420" r="52" pointer-events="all" fill-opacity="0"/>
-            <circle id="fz-cheek-right" cx="695" cy="420" r="52" pointer-events="all" fill-opacity="0"/>
-            <circle id="fz-nose" cx="500" cy="382" r="48" pointer-events="all" fill-opacity="0"/>
-            <circle id="fz-eye-left" cx="345" cy="295" r="72" pointer-events="all" fill-opacity="0"/>
-            <circle id="fz-eye-right" cx="655" cy="295" r="72" pointer-events="all" fill-opacity="0"/>
+            <rect id="fz-forehead" x="415" y="246" width="170" height="42" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-glasses-left" cx="268" cy="350" r="36" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-glasses-right" cx="732" cy="350" r="36" pointer-events="all" fill-opacity="0"/>
+            <rect id="fz-glasses-bridge" x="452" y="292" width="96" height="40" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-cheek-left" cx="300" cy="430" r="48" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-cheek-right" cx="700" cy="430" r="48" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-nose" cx="500" cy="392" r="44" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-eye-left" cx="345" cy="300" r="68" pointer-events="all" fill-opacity="0"/>
+            <circle id="fz-eye-right" cx="655" cy="300" r="68" pointer-events="all" fill-opacity="0"/>
           </g>
 
         </g>

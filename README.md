@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Built on Hermes Agent](https://img.shields.io/badge/Built%20on-Hermes%20Agent-7C3AED)](https://github.com/webdevtodayjason) [![Platform: Raspberry Pi 5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-C51A4A?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/) [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/webdevtodayjason/hermes-embodiment/pulls)
 
-![Minnie — the animated cat-eye face on the Pironman kiosk](docs/minnie.png)
+![Minnie — her animated cat-eye faces cycling through moods on the Pironman kiosk](img/minnie-faces-animated-optimized.gif)
 
 ---
 
@@ -28,7 +28,12 @@ It runs anywhere Hermes runs (the face is a self-contained web app in a browser,
 - **Animated cat-eye SVG face** — 16 expressions (idle, listening, thinking, speaking, alert, sleeping + 10 emotional moods), randomized blinking and eye-darts, spring-damper head physics, themed particle aura, and a state-agnostic mouth. Vanilla HTML/CSS/SVG/JS + Canvas — no framework, no build step.
 - **Live status wordmark** — the persona's nameplate doubles as an activity line. While the agent works, it shows the *friendly* name of the tool in flight ("searching the web…", "running code…", "working with files…"), then falls back to the persona name when idle.
 - **Case LEDs synced to state** — 18× WS2812 RGB driven directly over SPI (`spidev0.0`), color-and-style per state. Auto-detected and fully optional: present on a Pironman, inert everywhere else — it never raises into the agent.
-- **Voice** — speaks the agent's replies through ElevenLabs (or whatever TTS Hermes is configured with), with markdown stripped so it doesn't read syntax aloud. Synthesis and playback run on their own thread, so speech never blocks the conversation loop.
+- **Two-way streaming voice** — speaks the agent's replies through ElevenLabs (or whatever TTS Hermes is configured with), **streaming** so she starts talking within a few hundred ms, with the **mouth driven by her real audio** (per-chunk RMS over the SSE stream). Markdown is stripped so she never reads syntax aloud, and a new reply **preempts** the previous one so two responses never double up.
+- **Push-to-talk + barge-in** — hold the on-screen mic (or a floating button) to talk; audio is transcribed by a **local Whisper** and injected back to the agent. Pressing the mic again **interrupts her mid-sentence** so you can jump in.
+- **Touch control panel** — a translucent tap-to-open overlay for brightness, volume, and push-to-talk that lets her face show through behind it, plus a guarded **power-off** flow (confirm modal → graceful shutdown).
+- **Touch reactions** — poke her face (nose, forehead, cheeks, glasses, eyes) and she reacts — a quick expression change plus an LED flourish.
+- **Mood layer** — her reply's sentiment is inferred into one of **9 moods**; the face *and* the case LEDs settle on that mood at rest, so her body reflects how she feels.
+- **Memory** — an optional Hermes memory provider gives her real cross-session recall. The Minnie showcase uses **`holographic`** (local SQLite + FTS5 + HRR — no cloud, no server), so she grows with you over time.
 - **Config-driven personas** — persona, wake word, voice, audio device, face theme, and LED palette all live in `config.yaml`. Every key has a built-in default, so a bare box still runs as "face-in-a-browser + TTS".
 - **Fully offline kiosk** — no CDN, no fonts to fetch, no network at render time. Ships as static files served by the plugin itself.
 - **~60fps** — hardware-accelerated Canvas + SVG, tuned for a small kiosk display.

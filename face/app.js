@@ -1978,6 +1978,15 @@ class ControlPanel {
     this.rippleLayer = document.getElementById('cp-ripple-layer');
     if (!this.handle || !this.panel) return; // markup absent -> inert
 
+    // Shutdown control elements
+    this.powerBtn = document.getElementById('cp-power');
+    this.shutdownModal = document.getElementById('cp-shutdown');
+    this.shutdownBackdrop = document.getElementById('cp-shutdown-backdrop');
+    this.shutdownYes = document.getElementById('cp-shutdown-yes');
+    this.shutdownNo = document.getElementById('cp-shutdown-no');
+    this.shuttingOverlay = document.getElementById('cp-shutting');
+    this.shutdownOpen = false;
+
     this.isOpen = false;
     this.autoHideMs = 8000;     // auto-dismiss after ~8s idle
     this.autoHideTimer = null;
@@ -2002,6 +2011,7 @@ class ControlPanel {
     this.bindDismiss();
     this.bindPTT();
     this.bindRipple();
+    this.bindShutdown();
   }
 
   // --- tiny utilities ---
@@ -2129,8 +2139,11 @@ class ControlPanel {
   armAutoHide() {
     if (!this.isOpen) return;
     if (this.autoHideTimer) clearTimeout(this.autoHideTimer);
+    // Don't run the idle timer while the shutdown modal is up — the user is
+    // mid-decision; the panel must stay put behind it.
+    if (this.shutdownOpen) return;
     this.autoHideTimer = setTimeout(() => {
-      if (this.isOpen && !this.pttActive) this.closePanel();
+      if (this.isOpen && !this.pttActive && !this.shutdownOpen) this.closePanel();
     }, this.autoHideMs);
   }
 
@@ -2160,7 +2173,12 @@ class ControlPanel {
     this.panel.addEventListener('pointerdown', () => this.armAutoHide());
     this.panel.addEventListener('pointermove', () => this.armAutoHide());
     try {
-      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closePanel(); });
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        // Escape closes the shutdown modal first (if open), else the panel.
+        if (this.shutdownOpen) this.closeShutdown();
+        else this.closePanel();
+      });
     } catch (_) {}
   }
 
@@ -2212,6 +2230,56 @@ class ControlPanel {
       this.rippleLayer.appendChild(r);
       setTimeout(() => { if (r.parentNode) r.parentNode.removeChild(r); }, 650);
     }, true); // capture phase -> fires even if a target stops propagation
+  }
+
+  // --- Shutdown control: power button -> confirm modal -> Yes posts poweroff ---
+  bindShutdown() {
+    if (!this.powerBtn || !this.shutdownModal) return; // markup absent -> inert
+    this.powerBtn.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      this.openShutdown();
+    });
+    // No / Cancel + tap-away dismiss with ZERO side effects.
+    this.shutdownNo.addEventListener('pointerdown', (e) => { e.preventDefault(); this.closeShutdown(); });
+    this.shutdownBackdrop.addEventListener('pointerdown', (e) => { e.preventDefault(); this.closeShutdown(); });
+    // Yes is the ONLY path that fires the poweroff.
+    this.shutdownYes.addEventListener('pointerdown', (e) => { e.preventDefault(); this.confirmShutdown(); });
+  }
+
+  openShutdown() {
+    if (this.shutdownOpen) return;
+    this.shutdownOpen = true;
+    this.shutdownModal.hidden = false;
+    requestAnimationFrame(() => this.shutdownModal.classList.add('cp-visible'));
+    this.shutdownModal.setAttribute('aria-hidden', 'false');
+    // Freeze the panel's idle auto-hide while the user decides.
+    if (this.autoHideTimer) { clearTimeout(this.autoHideTimer); this.autoHideTimer = null; }
+  }
+
+  closeShutdown() {
+    if (!this.shutdownOpen) return;
+    this.shutdownOpen = false;
+    this.shutdownModal.classList.remove('cp-visible');
+    this.shutdownModal.setAttribute('aria-hidden', 'true');
+    const m = this.shutdownModal;
+    setTimeout(() => { if (!this.shutdownOpen) m.hidden = true; }, this.reduceMotion ? 0 : 260);
+    this.armAutoHide(); // resume the panel's idle timer; panel stays open
+  }
+
+  // The explicit, deliberate confirm — the ONLY thing that powers off.
+  confirmShutdown() {
+    this.postCtl('/control/shutdown', { confirm: true });
+    // Tear down the modal and show the terminal "shutting down" overlay.
+    this.shutdownOpen = false;
+    this.shutdownModal.classList.remove('cp-visible');
+    this.shutdownModal.setAttribute('aria-hidden', 'true');
+    this.shutdownModal.hidden = true;
+    if (this.autoHideTimer) { clearTimeout(this.autoHideTimer); this.autoHideTimer = null; }
+    if (this.shuttingOverlay) {
+      this.shuttingOverlay.hidden = false;
+      requestAnimationFrame(() => this.shuttingOverlay.classList.add('cp-visible'));
+      this.shuttingOverlay.setAttribute('aria-hidden', 'false');
+    }
   }
 }
 

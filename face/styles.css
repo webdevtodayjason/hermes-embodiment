@@ -717,6 +717,10 @@ body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; botto
   box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.5), 0 0 28px rgba(0, 240, 255, 0.12);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  /* Never let the panel exceed the screen: on a short viewport it scrolls
+     internally instead of pushing the header (power button) off the top edge. */
+  max-height: 100vh;
+  overflow-y: auto;
   transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .cp-panel.cp-visible { transform: translate(-50%, 0); }
@@ -747,6 +751,143 @@ body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; botto
   outline: none;
 }
 .cp-close:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* Header actions cluster: power + close, top-right of the panel header. */
+.cp-head-actions { display: flex; align-items: center; gap: 10px; }
+
+/* Power button — tasteful neon ⏻, danger-red so it reads as "shut down". */
+.cp-power {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(255, 0, 60, 0.06);
+  border: 1px solid rgba(255, 0, 60, 0.35);
+  color: var(--neon-red);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 0 6px rgba(255, 0, 60, 0.5);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.cp-power:hover { background: rgba(255, 0, 60, 0.12); box-shadow: 0 0 12px rgba(255, 0, 60, 0.4); }
+
+/* Shutdown CONFIRM modal — centered, dark translucent, above the panel. */
+.cp-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* CRITICAL: an author `display` rule overrides the UA [hidden] rule, so the
+   modal/overlay would otherwise sit invisibly over the whole screen (z 70/80)
+   and swallow every tap. Re-assert hiding when the `hidden` attribute is set. */
+.cp-modal[hidden],
+.cp-shutting[hidden] { display: none !important; }
+.cp-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 2, 10, 0.6);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.cp-modal.cp-visible .cp-modal-backdrop { opacity: 1; }
+.cp-modal-box {
+  position: relative;
+  width: min(360px, 86vw);
+  padding: 28px 26px 24px;
+  border-radius: 18px;
+  background: rgba(8, 8, 20, 0.92);
+  border: 1px solid rgba(255, 0, 60, 0.35);
+  box-shadow: 0 10px 50px rgba(0, 0, 0, 0.65), 0 0 30px rgba(255, 0, 60, 0.15);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  text-align: center;
+  transform: scale(0.9);
+  opacity: 0;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease;
+}
+.cp-modal.cp-visible .cp-modal-box { transform: scale(1); opacity: 1; }
+.cp-modal-icon {
+  font-size: 30px;
+  color: var(--neon-red);
+  text-shadow: 0 0 12px rgba(255, 0, 60, 0.6);
+  margin-bottom: 8px;
+}
+.cp-modal-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #ffffff;
+  margin-bottom: 22px;
+}
+.cp-modal-btns { display: flex; gap: 14px; }
+.cp-modal-btn {
+  flex: 1;
+  height: 60px;            /* big finger targets */
+  border-radius: 12px;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  cursor: pointer;
+  outline: none;
+  touch-action: none;
+}
+.cp-modal-no {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+.cp-modal-no:hover { background: rgba(255, 255, 255, 0.1); }
+.cp-modal-yes {
+  background: rgba(255, 0, 60, 0.16);
+  border: 1.5px solid var(--neon-red);
+  color: #ff5b7e;
+  text-shadow: 0 0 8px rgba(255, 0, 60, 0.5);
+}
+.cp-modal-yes:hover { background: rgba(255, 0, 60, 0.28); box-shadow: 0 0 20px rgba(255, 0, 60, 0.4); }
+
+/* Shutting-down overlay (after Yes). Covers everything; backend powers off. */
+.cp-shutting {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 2, 8, 0.85);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.cp-shutting.cp-visible { opacity: 1; }
+.cp-shutting-inner { text-align: center; }
+.cp-shutting-icon {
+  font-size: 48px;
+  color: var(--neon-red);
+  text-shadow: 0 0 18px rgba(255, 0, 60, 0.7);
+  animation: cpShuttingPulse 1.6s ease-in-out infinite;
+}
+.cp-shutting-text {
+  margin-top: 16px;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: rgba(255, 255, 255, 0.85);
+}
+@keyframes cpShuttingPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
 
 /* Slider rows */
 .cp-row { display: flex; flex-direction: column; gap: 8px; }

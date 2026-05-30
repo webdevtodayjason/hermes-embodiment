@@ -503,7 +503,11 @@
   <section id="cp-panel" class="cp-panel" role="dialog" aria-label="Controls" aria-hidden="true">
     <header class="cp-head">
       <span class="cp-title">· CONTROLS ·</span>
-      <button id="cp-close" class="cp-close" type="button" aria-label="Close controls">×</button>
+      <div class="cp-head-actions">
+        <!-- Power: opens the shutdown CONFIRM modal (never shuts down on one tap) -->
+        <button id="cp-power" class="cp-power" type="button" aria-label="Power — shut down">⏻</button>
+        <button id="cp-close" class="cp-close" type="button" aria-label="Close controls">×</button>
+      </div>
     </header>
 
     <!-- Brightness 0–100% -->
@@ -539,6 +543,28 @@
       <span class="cp-ptt-hint">press &amp; hold</span>
     </button>
   </section>
+
+  <!-- Shutdown CONFIRM modal — the mis-tap guard: poweroff requires the explicit
+       Yes. No / Cancel / tap-away / Escape dismiss it with zero side effects. -->
+  <div id="cp-shutdown" class="cp-modal" role="dialog" aria-modal="true" aria-label="Confirm shutdown" aria-hidden="true" hidden>
+    <div class="cp-modal-backdrop" id="cp-shutdown-backdrop"></div>
+    <div class="cp-modal-box" role="document">
+      <div class="cp-modal-icon">⏻</div>
+      <div class="cp-modal-title">Shut down?</div>
+      <div class="cp-modal-btns">
+        <button id="cp-shutdown-no" class="cp-modal-btn cp-modal-no" type="button">No</button>
+        <button id="cp-shutdown-yes" class="cp-modal-btn cp-modal-yes" type="button">Yes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shutting-down overlay (shown after Yes; the backend runs the poweroff) -->
+  <div id="cp-shutting" class="cp-shutting" aria-hidden="true" hidden>
+    <div class="cp-shutting-inner">
+      <div class="cp-shutting-icon">⏻</div>
+      <div class="cp-shutting-text">SHUTTING&nbsp;DOWN…</div>
+    </div>
+  </div>
 
   <!-- Tap-ripple layer (visible touch confirmation; pointer-events:none) -->
   <div id="cp-ripple-layer" class="cp-ripple-layer" aria-hidden="true"></div>

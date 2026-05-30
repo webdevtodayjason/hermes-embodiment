@@ -1985,7 +1985,9 @@ class ControlPanel {
     this.shutdownYes = document.getElementById('cp-shutdown-yes');
     this.shutdownNo = document.getElementById('cp-shutdown-no');
     this.shuttingOverlay = document.getElementById('cp-shutting');
+    this.toastEl = document.getElementById('cp-toast');
     this.shutdownOpen = false;
+    this.shutdownPending = false; // guards against double-fire while awaiting
 
     this.isOpen = false;
     this.autoHideMs = 8000;     // auto-dismiss after ~8s idle
@@ -2266,20 +2268,71 @@ class ControlPanel {
     this.armAutoHide(); // resume the panel's idle timer; panel stays open
   }
 
-  // The explicit, deliberate confirm — the ONLY thing that powers off.
-  confirmShutdown() {
-    this.postCtl('/control/shutdown', { confirm: true });
-    // Tear down the modal and show the terminal "shutting down" overlay.
-    this.shutdownOpen = false;
-    this.shutdownModal.classList.remove('cp-visible');
-    this.shutdownModal.setAttribute('aria-hidden', 'true');
-    this.shutdownModal.hidden = true;
-    if (this.autoHideTimer) { clearTimeout(this.autoHideTimer); this.autoHideTimer = null; }
-    if (this.shuttingOverlay) {
-      this.shuttingOverlay.hidden = false;
-      requestAnimationFrame(() => this.shuttingOverlay.classList.add('cp-visible'));
-      this.shuttingOverlay.setAttribute('aria-hidden', 'false');
+  // The explicit, deliberate confirm — the ONLY thing that powers off. The
+  // "SHUTTING DOWN…" overlay is GATED on a CONFIRMED success: we await the POST
+  // and only show the overlay on HTTP 200 with {ok:true, shutting_down:true}.
+  // Any failure (non-200 / network / timeout) -> NO overlay, dismiss the modal,
+  // and show a dismissible error toast so the user is never misled or stuck.
+  async confirmShutdown() {
+    if (this.shutdownPending) return; // ignore a double-tap while awaiting
+    this.shutdownPending = true;
+
+    let ok = false;
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 4000);
+      const r = await fetch('/control/shutdown', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true }), cache: 'no-store', signal: c.signal
+      });
+      clearTimeout(t);
+      if (r && r.status === 200) {
+        let data = null;
+        try { data = await r.json(); } catch (e) { data = null; }
+        ok = !!(data && data.ok === true && data.shutting_down === true);
+      }
+    } catch (e) {
+      ok = false; // network error / abort / timeout
     }
+
+    this.shutdownPending = false;
+
+    if (ok) {
+      // Confirmed: tear down the modal and show the terminal overlay.
+      this.shutdownOpen = false;
+      this.shutdownModal.classList.remove('cp-visible');
+      this.shutdownModal.setAttribute('aria-hidden', 'true');
+      this.shutdownModal.hidden = true;
+      if (this.autoHideTimer) { clearTimeout(this.autoHideTimer); this.autoHideTimer = null; }
+      if (this.shuttingOverlay) {
+        this.shuttingOverlay.hidden = false;
+        requestAnimationFrame(() => this.shuttingOverlay.classList.add('cp-visible'));
+        this.shuttingOverlay.setAttribute('aria-hidden', 'false');
+      }
+    } else {
+      // Failed: NO overlay. Dismiss the modal, keep the panel usable, toast.
+      this.closeShutdown();
+      this.showToast('Shutdown failed — try again');
+    }
+  }
+
+  // Brief, dismissible toast. Tap to dismiss; also auto-hides. Never blocks.
+  showToast(msg) {
+    const el = this.toastEl;
+    if (!el) return;
+    el.textContent = msg;
+    el.hidden = false;
+    el.setAttribute('aria-hidden', 'false');
+    requestAnimationFrame(() => el.classList.add('cp-visible'));
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    const hide = () => {
+      el.classList.remove('cp-visible');
+      el.setAttribute('aria-hidden', 'true');
+      if (this._toastTimer) { clearTimeout(this._toastTimer); this._toastTimer = null; }
+      setTimeout(() => { if (!el.classList.contains('cp-visible')) el.hidden = true; }, this.reduceMotion ? 0 : 260);
+    };
+    if (!el._tapBound) { el.addEventListener('pointerdown', hide); el._tapBound = true; }
+    this._toastTimer = setTimeout(hide, 4000);
   }
 }
 

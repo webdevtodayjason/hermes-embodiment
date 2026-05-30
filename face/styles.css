@@ -889,6 +889,35 @@ body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; botto
   50% { opacity: 1; }
 }
 
+/* Transient toast — brief, dismissible message (e.g. shutdown failure). Sits
+   above everything; tap to dismiss. Never blocks the UI (auto-hides). */
+.cp-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(12px);
+  z-index: 90;
+  max-width: 86vw;
+  padding: 14px 22px;
+  border-radius: 12px;
+  background: rgba(20, 6, 10, 0.95);
+  border: 1px solid rgba(255, 0, 60, 0.5);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6), 0 0 16px rgba(255, 0, 60, 0.25);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #ffd0da;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.cp-toast[hidden] { display: none !important; }
+.cp-toast.cp-visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+
 /* Slider rows */
 .cp-row { display: flex; flex-direction: column; gap: 8px; }
 .cp-row-top { display: flex; align-items: baseline; justify-content: space-between; }

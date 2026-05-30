@@ -17,6 +17,7 @@ Endpoints
   POST /control/volume     {"value":0-150}        -> set default-sink volume
   POST /control/ptt        {"action":"start|stop"} -> push-to-talk (listening/idle)
   POST /control/mood       {"value":"<mood>"[,"ttl":<s>]} -> set gateway mood (touch reactions/testing)
+  POST /control/shutdown   {"confirm":true}        -> graceful poweroff (~1.5s after the 200)
 
   The /control/* surface is the kiosk's hardware control panel; all device access
   is isolated in ``embody.core.controls`` (best-effort, no-op off-Pi, never raises).
@@ -386,6 +387,17 @@ def _validate_ttl(value):
     return max(0.0, min(3600.0, n))
 
 
+def _ctl_shutdown(body: dict):
+    # Mis-tap guard: require a strict boolean True (JSON true). Anything else —
+    # missing, false, 1, "true" — is rejected with NO shutdown.
+    if body.get("confirm") is not True:
+        return {"ok": False, "error": "confirm:true required"}, 400
+    # Respond first; controls.shutdown() schedules the poweroff ~1.5s later so this
+    # 200 flushes to the panel before the box goes down. Best-effort / never-raise.
+    _controls.shutdown()
+    return {"ok": True, "shutting_down": True}
+
+
 def _control_readback() -> dict:
     """GET /control/state: {brightness, volume, listening}. Never raises."""
     st = _controls.read_state()        # {brightness, volume} (mood-agnostic hw read)
@@ -490,6 +502,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/control/volume":     _ctl_volume,
             "/control/ptt":        _ctl_ptt,
             "/control/mood":       _ctl_mood,
+            "/control/shutdown":   _ctl_shutdown,
         }.get(path)
         if handler is None:
             self.send_error(404, "Not Found")

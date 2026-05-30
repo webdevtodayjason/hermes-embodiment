@@ -33,6 +33,7 @@ import glob
 import logging
 import os
 import subprocess
+import threading
 
 logger = logging.getLogger("embody.core.controls")
 
@@ -43,6 +44,11 @@ _WPCTL = "wpctl"
 
 _BRIGHT_MAX_PCT = 100
 _VOL_MAX_PCT = 150          # wpctl allows boosting past 100%; cap the panel at 150
+
+# Graceful poweroff (panel shutdown button). `jason` has NOPASSWD: ALL, so no tty.
+_POWEROFF_CMD = ["sudo", "systemctl", "poweroff"]
+_POWEROFF_FALLBACK = ["sudo", "/usr/sbin/poweroff"]
+_SHUTDOWN_DELAY = 1.5       # seconds — lets the HTTP response flush before the box goes down
 
 # Optional callback fired on every PTT action ("start" | "stop"); installed by a
 # future streaming-voice loop via set_ptt_callback(). Default: an inert seam.
@@ -190,6 +196,44 @@ def ptt(action: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Power (graceful shutdown)
+# --------------------------------------------------------------------------- #
+def shutdown(delay: float = _SHUTDOWN_DELAY) -> None:
+    """Schedule a graceful poweroff after ``delay`` seconds (so the HTTP response
+    flushes to the panel before the box goes down). Runs the exec on a detached
+    daemon timer thread and returns immediately. Best-effort; never raises.
+
+    The actual command exec is isolated in ``_poweroff_exec`` so tests can
+    monkeypatch it (or ``subprocess.Popen``) with ZERO risk of powering off the
+    host. Caller (the HTTP handler) has already validated ``confirm:true``.
+    """
+    try:
+        timer = threading.Timer(max(0.0, float(delay)), _poweroff_exec)
+        timer.daemon = True
+        timer.start()
+    except Exception:  # noqa: BLE001 — scheduling failure must never crash the request.
+        logger.debug("failed to schedule poweroff (ignored).", exc_info=True)
+
+
+def _poweroff_exec() -> None:
+    """Run the poweroff command detached (new session). Tries ``systemctl``, falls
+    back to ``/usr/sbin/poweroff`` only if the first spawn raises (binary absent).
+    Never raises."""
+    for cmd in (_POWEROFF_CMD, _POWEROFF_FALLBACK):
+        try:
+            subprocess.Popen(
+                cmd,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("poweroff via %s failed; trying fallback.", cmd, exc_info=True)
+    logger.warning("poweroff: all commands failed; box stays up.")
+
+
+# --------------------------------------------------------------------------- #
 # Internals
 # --------------------------------------------------------------------------- #
 def _clamp(value, lo: int, hi: int, default: int = 0) -> int:
@@ -205,4 +249,5 @@ __all__ = [
     "set_brightness", "get_brightness",
     "set_volume", "get_volume",
     "read_state", "ptt", "set_ptt_callback",
+    "shutdown",
 ]

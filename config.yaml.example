@@ -37,6 +37,10 @@ voice_input:                   # push-to-talk voice INPUT: PTT -> record -> loca
   stt_venv: "~/.embody-stt"    # isolated faster-whisper venv; transcription runs by SUBPROCESS (never imported)
   stt_model: "base"            # whisper model name cached in that venv
   mic_source: ""               # "" => default PipeWire source (e.g. the Samson Go Mic)
+  conversation_id: "evy-voice" # stable conversation key -> consecutive voice turns THREAD into one
+                               # ongoing agent conversation (continuity) instead of a fresh session
+                               # each time. Sent in the webhook payload; honored by the gateway's
+                               # webhook conversation patch. Wake-word turns reuse this same id.
   webhook:                     # transcript is POSTed here -> a real agent turn -> Minnie replies aloud
     host: "127.0.0.1"          # loopback: the gateway webhook platform must bind 127.0.0.1
     port: 8644                 # gateway webhook port (platforms.webhook.extra.port)
@@ -53,6 +57,13 @@ face:
     enabled: false             # true => launch a dedicated kiosk browser at the face URL
     user_data_dir: "~/.embody-kiosk"
     command: ""                # "" => auto-build chromium --kiosk --app=<url>; override for other browsers
+
+mic:
+  monitor: true                # live mic VU meter on the touch panel: a parecord-fed
+                               # monitor broadcasts input_rms/input_peak on /events so the
+                               # control panel shows the live input level + clipping. Set
+                               # false to disable the continuous capture (the gain slider
+                               # still works; the meter just stays at 0).
 
 leds:
   backend: "auto"              # auto (active iff `pironman5` on PATH) | pironman | off

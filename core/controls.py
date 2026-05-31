@@ -12,7 +12,9 @@ Surfaces
   get_brightness() -> int              current backlight as 0-100
   set_volume(pct: 0-150) -> int        wpctl set-volume on the default sink (returns applied pct)
   get_volume() -> int                  current sink volume as 0-150
-  read_state() -> dict                 {"brightness": pct, "volume": pct}
+  set_mic_gain(pct: 0-150) -> int      wpctl set-volume on the default SOURCE (mic capture gain)
+  get_mic_gain() -> int                current mic gain as 0-150
+  read_state() -> dict                 {"brightness": pct, "volume": pct, "mic_gain": pct}
   ptt(action) -> None                  fire the optional PTT callback seam
   set_ptt_callback(fn) -> None         install the seam (future streaming-voice loop)
 
@@ -40,10 +42,12 @@ logger = logging.getLogger("embody.core.controls")
 _BACKLIGHT_GLOB = "/sys/class/backlight/*"
 _XDG_RUNTIME_DIR = "/run/user/1000"
 _DEFAULT_SINK = "@DEFAULT_AUDIO_SINK@"
+_DEFAULT_SOURCE = "@DEFAULT_AUDIO_SOURCE@"   # the mic (capture) device
 _WPCTL = "wpctl"
 
 _BRIGHT_MAX_PCT = 100
 _VOL_MAX_PCT = 150          # wpctl allows boosting past 100%; cap the panel at 150
+_MIC_MAX_PCT = 150          # mic capture gain; cap at 150 (clipping shows on the live meter)
 
 # Graceful poweroff (panel shutdown button). `jason` has NOPASSWD: ALL, so no tty.
 _POWEROFF_CMD = ["sudo", "systemctl", "poweroff"]
@@ -146,6 +150,32 @@ def get_volume() -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# Mic gain (wpctl / PipeWire capture source)
+# --------------------------------------------------------------------------- #
+def set_mic_gain(pct) -> int:
+    """Set the default SOURCE (mic) capture gain to ``pct`` (0-150). Returns the
+    clamped pct applied. No-ops (still returns pct) when ``wpctl`` is absent. Never
+    raises. Lower this if the live input meter shows clipping (red)."""
+    pct = _clamp(pct, 0, _MIC_MAX_PCT)
+    _run_wpctl(["set-volume", _DEFAULT_SOURCE, f"{pct / 100.0:.2f}"])
+    return pct
+
+
+def get_mic_gain() -> int:
+    """Current default-source (mic) gain as 0-150. 0 when wpctl is absent/unreadable."""
+    cp = _run_wpctl(["get-volume", _DEFAULT_SOURCE])
+    if cp is None or cp.returncode != 0 or not cp.stdout:
+        return 0
+    for token in cp.stdout.strip().split():
+        try:
+            frac = float(token)
+        except ValueError:
+            continue
+        return max(0, min(_MIC_MAX_PCT, int(round(frac * 100))))
+    return 0
+
+
 def _run_wpctl(args: list) -> "subprocess.CompletedProcess | None":
     """Run ``wpctl <args>`` on the user PipeWire bus. Returns the completed process,
     or None if wpctl is absent / the call errored. Never raises."""
@@ -173,7 +203,7 @@ def read_state() -> dict:
 
     (Liveness of "listening" is owned by core.state, which adds it to the response.)
     """
-    return {"brightness": get_brightness(), "volume": get_volume()}
+    return {"brightness": get_brightness(), "volume": get_volume(), "mic_gain": get_mic_gain()}
 
 
 def set_ptt_callback(fn) -> None:
@@ -248,6 +278,7 @@ def _clamp(value, lo: int, hi: int, default: int = 0) -> int:
 __all__ = [
     "set_brightness", "get_brightness",
     "set_volume", "get_volume",
+    "set_mic_gain", "get_mic_gain",
     "read_state", "ptt", "set_ptt_callback",
     "shutdown",
 ]

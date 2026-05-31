@@ -27,3 +27,18 @@ env/
 
 # --- Local-only docs assets (e.g. unshared kiosk photos) ---
 /docs/*.local.*
+
+# --- Voice recordings & bulky/unoptimized media (keep out of the public repo) ---
+# NOTE: the optimized hero GIF (img/minnie-faces-animated-optimized.gif) stays TRACKED.
+*.m4a
+*.wav
+/img/miinie-01.png
+/img/minnie-faces-animated.gif
+
+# --- SSH keys / secrets must NEVER be committed ---
+id_rsa
+id_ed25519
+*.pem
+*_key
+*_key.pub
+.ssh/

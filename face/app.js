@@ -848,6 +848,12 @@ class MinnieController {
         if (data.volume !== undefined && data.volume !== null) {
           this.setVolume(parseFloat(data.volume));
         }
+        // Live MIC input level (control-panel VU meter). Transient frame (no
+        // state/mood) -> falls through to `if (!raw) return` like volume frames.
+        if ((data.input_rms !== undefined || data.input_peak !== undefined) && window.__embodyMicLevel) {
+          window.__embodyMicLevel(parseFloat(data.input_rms) || 0,
+                                  parseFloat(data.input_peak) || 0);
+        }
         // MOOD layer: independent of state. Apply ONLY when the field is present
         // (old frames omit `mood` -> leave the current mood untouched). Empty or
         // unknown -> neutral inside setMood. The connect-sync snapshot frame
@@ -1960,9 +1966,10 @@ function changeMood(mood) {
 // A slide-in overlay (Brightness / Volume sliders + Push-to-Talk) layered ON
 // TOP of the face — it never touches MinnieController's animation/mood loop. It
 // talks to the same-origin embody server (embody.core.controls):
-//   GET  /control/state            -> {brightness:0-100, volume:0-150, listening:bool}
+//   GET  /control/state            -> {brightness:0-100, volume:0-150, mic_gain:0-150, listening:bool}
 //   POST /control/brightness {value:0-100}
 //   POST /control/volume     {value:0-150}
+//   POST /control/mic_gain   {value:0-150}      (live level meter fed by SSE input_rms/input_peak)
 //   POST /control/ptt        {action:"start"|"stop"}
 // Every request is wrapped + timed out, so with no server (offline/file://) the
 // panel still opens and drags — the POSTs just no-op. Pointer events mean one
@@ -2008,6 +2015,17 @@ class ControlPanel {
       root: 'cp-vol', fill: 'cp-vol-fill', thumb: 'cp-vol-thumb',
       val: 'cp-vol-val', min: 0, max: 150, suffix: '%', path: '/control/volume'
     });
+    this.mic = this.setupSlider({
+      root: 'cp-mic', fill: 'cp-mic-fill', thumb: 'cp-mic-thumb',
+      val: 'cp-mic-val', min: 0, max: 150, suffix: '%', path: '/control/mic_gain'
+    });
+
+    // Live mic VU meter elements + a global hook the SSE stream pumps into.
+    this.micMeterFill = document.getElementById('cp-mic-meter-fill');
+    this.micClip = document.getElementById('cp-mic-clip');
+    this._micLvlCls = 'lvl-ok';
+    this._clipTimer = null;
+    window.__embodyMicLevel = (rms, peak) => this.updateMicLevel(rms, peak);
 
     this.bindOpener();
     this.bindDismiss();
@@ -2043,6 +2061,35 @@ class ControlPanel {
       if (r && r.ok) return await r.json();
     } catch (e) { /* offline — keep defaults */ }
     return null;
+  }
+
+  // --- live mic VU meter (fed by SSE input_rms/input_peak frames) ---
+  // Peak drives the bar (instant level); green < 70%, amber 70–90%, red > 90%.
+  // A near-ceiling peak latches the CLIP light for ~1.2s so transient clips show.
+  // No-ops while the panel is closed (the meter is hidden) to skip needless DOM work.
+  updateMicLevel(rms, peak) {
+    if (!this.isOpen || !this.micMeterFill) return;
+    let lvl = parseFloat(peak);
+    if (!isFinite(lvl)) lvl = 0;
+    lvl = Math.max(0, Math.min(1, lvl));
+    const pct = Math.round(lvl * 100);
+    this.micMeterFill.style.width = pct + '%';
+
+    let cls = 'lvl-ok';
+    if (lvl >= 0.90) cls = 'lvl-clip';
+    else if (lvl >= 0.70) cls = 'lvl-hot';
+    if (cls !== this._micLvlCls) {
+      this.micMeterFill.className = 'cp-meter-fill ' + cls;
+      this._micLvlCls = cls;
+    }
+
+    if (lvl >= 0.985 && this.micClip) {        // real clip -> latch the light
+      this.micClip.classList.add('cp-clip-on');
+      if (this._clipTimer) clearTimeout(this._clipTimer);
+      this._clipTimer = setTimeout(() => {
+        if (this.micClip) this.micClip.classList.remove('cp-clip-on');
+      }, 1200);
+    }
   }
 
   // --- big finger-friendly slider built on pointer events ---
@@ -2119,6 +2166,7 @@ class ControlPanel {
     if (st) {
       if (typeof st.brightness === 'number') this.bright.set(st.brightness);
       if (typeof st.volume === 'number') this.vol.set(st.volume);
+      if (typeof st.mic_gain === 'number') this.mic.set(st.mic_gain);
       if (st.listening) this.ptt.classList.add('cp-on');
       else if (!this.pttActive) this.ptt.classList.remove('cp-on');
     }

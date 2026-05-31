@@ -15,7 +15,11 @@ Endpoints
   GET  /control/state     -> touch-panel readback {brightness, volume, listening}
   POST /control/brightness {"value":0-100}        -> set panel backlight
   POST /control/volume     {"value":0-150}        -> set default-sink volume
+  POST /control/mic_gain   {"value":0-150}        -> set default-source (mic) capture gain
   POST /control/ptt        {"action":"start|stop"} -> push-to-talk (listening/idle)
+
+  Live mic level: a continuous mic monitor (parecord) broadcasts transient
+  ``{"input_rms", "input_peak"}`` frames on /events for the panel's VU meter.
   POST /control/mood       {"value":"<mood>"[,"ttl":<s>]} -> set gateway mood (touch reactions/testing)
   POST /control/shutdown   {"confirm":true}        -> graceful poweroff (~1.5s after the 200)
 
@@ -212,6 +216,72 @@ def broadcast_volume(volume: float) -> None:
     _broadcast(json.dumps({"volume": v}))
 
 
+def broadcast_input_level(rms: float, peak: float = 0.0) -> None:
+    """Push a live MIC INPUT level frame (``{"input_rms", "input_peak"}``, 0.0–1.0)
+    to the face over ``/events`` for the control-panel VU meter + clip indicator.
+    Transient render signal (NOT in snapshot). Best-effort; never raises."""
+    try:
+        r = max(0.0, min(1.0, float(rms)))
+        p = max(0.0, min(1.0, float(peak)))
+    except (TypeError, ValueError):
+        return
+    _broadcast(json.dumps({"input_rms": r, "input_peak": p}))
+
+
+# --- live mic-level monitor (parecord -> RMS/peak -> SSE) --------------------
+_mic_monitor_thread = None
+
+
+def start_mic_monitor() -> None:
+    """Start the live mic-level monitor (idempotent; config-gated by ``mic.monitor``,
+    default on). Spawns ``parecord`` and broadcasts per-block RMS/peak so the touch
+    panel's VU meter shows the live input + clipping. Best-effort: no parecord (off-Pi)
+    => the thread idles/retries and the meter simply stays at 0."""
+    global _mic_monitor_thread
+    mic_cfg = _cfg.get("mic", {}) if isinstance(_cfg, dict) else {}
+    if isinstance(mic_cfg, dict) and mic_cfg.get("monitor", True) is False:
+        return
+    if _mic_monitor_thread is not None and _mic_monitor_thread.is_alive():
+        return
+    t = threading.Thread(target=_mic_monitor_loop, name="embody-mic-monitor", daemon=True)
+    _mic_monitor_thread = t
+    t.start()
+
+
+def _mic_monitor_loop() -> None:
+    import array
+    import math
+    import subprocess
+    import time
+    rate = 16000
+    block = int(0.1 * rate)                 # 100 ms -> ~10 fps meter
+    nbytes = block * 2                       # s16le = 2 bytes/sample
+    cmd = ["parecord", f"--rate={rate}", "--channels=1", "--format=s16le", "--raw"]
+    while True:
+        proc = None
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            while True:
+                buf = proc.stdout.read(nbytes)
+                if not buf or len(buf) < nbytes:
+                    break
+                a = array.array("h")
+                a.frombytes(buf)
+                n = len(a) or 1
+                peak = max(abs(min(a)), abs(max(a)))         # C-level scans
+                rms = math.sqrt(sum(s * s for s in a) / n)   # one tight loop
+                broadcast_input_level(rms / 32768.0, peak / 32768.0)
+        except Exception as exc:  # noqa: BLE001 — monitor must never crash the server
+            _warn(f"mic monitor: {exc}")
+        finally:
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+        time.sleep(2)   # parecord absent/died -> retry (stays down off-Pi)
+
+
 def start_server() -> "StateServer":
     """Start the daemon-thread state server (idempotent). Host/port come from config."""
     global _server
@@ -221,6 +291,7 @@ def start_server() -> "StateServer":
     if _server is None:
         _server = StateServer(host, port)
     _server.start()
+    start_mic_monitor()   # live mic VU meter feed for the touch panel (best-effort)
     return _server
 
 
@@ -365,6 +436,13 @@ def _ctl_volume(body: dict):
     if pct is None:
         return {"ok": False, "error": "value must be a number in 0-150"}, 400
     return {"ok": True, "volume": _controls.set_volume(pct)}
+
+
+def _ctl_mic_gain(body: dict):
+    pct = _validate_pct(body.get("value"), 0, 150)
+    if pct is None:
+        return {"ok": False, "error": "value must be a number in 0-150"}, 400
+    return {"ok": True, "mic_gain": _controls.set_mic_gain(pct)}
 
 
 def _ctl_ptt(body: dict):
@@ -517,6 +595,7 @@ class _Handler(BaseHTTPRequestHandler):
         handler = {
             "/control/brightness": _ctl_brightness,
             "/control/volume":     _ctl_volume,
+            "/control/mic_gain":   _ctl_mic_gain,
             "/control/ptt":        _ctl_ptt,
             "/control/mood":       _ctl_mood,
             "/control/shutdown":   _ctl_shutdown,

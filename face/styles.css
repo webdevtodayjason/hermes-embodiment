@@ -1034,6 +1034,54 @@ body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; botto
   pointer-events: none;    /* the whole .cp-slider handles the pointer */
 }
 
+/* Live mic VU meter — peak-driven bar, green→amber→red, with a CLIP latch.
+   Same width/radius as the slider track so the two rows align visually. */
+.cp-meter {
+  position: relative;
+  width: 100%;
+  height: 16px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.cp-meter-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0%;
+  border-radius: 8px 0 0 8px;
+  transition: width 80ms linear, background 120ms linear, box-shadow 120ms linear;
+}
+/* level zones (set by app.js from the live peak) */
+.cp-meter-fill.lvl-ok   { background: linear-gradient(90deg, #00d68a, #2effb0); box-shadow: 0 0 10px rgba(0, 214, 138, 0.45); }
+.cp-meter-fill.lvl-hot  { background: linear-gradient(90deg, #00d68a, #ffd23f); box-shadow: 0 0 10px rgba(255, 210, 63, 0.5); }
+.cp-meter-fill.lvl-clip { background: linear-gradient(90deg, #ffb03f, #ff3b5c); box-shadow: 0 0 14px rgba(255, 59, 92, 0.7); }
+/* fixed reference ticks at the 70% (hot) and 90% (near-clip) marks */
+.cp-meter-tick {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.32);
+  pointer-events: none;
+}
+.cp-meter-tick.t70 { left: 70%; }
+.cp-meter-tick.t90 { left: 90%; background: rgba(255, 80, 110, 0.55); }
+
+/* CLIP latch — dim by default, flares red and holds ~1.2s on a real clip. */
+.cp-clip {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.28);
+  text-shadow: none;
+  transition: color 80ms linear, text-shadow 80ms linear;
+}
+.cp-clip.cp-clip-on {
+  color: #ff3b5c;
+  text-shadow: 0 0 12px rgba(255, 59, 92, 0.9);
+}
+
 /* Push-to-Talk — big press-and-hold target; glows while held / listening. */
 .cp-ptt {
   position: relative;

@@ -536,6 +536,32 @@
       </div>
     </div>
 
+    <!-- Microphone: live input level (VU) + capture gain 0–150% -->
+    <div class="cp-row">
+      <div class="cp-row-top">
+        <span class="cp-label">MIC&nbsp;LEVEL</span>
+        <span class="cp-clip" id="cp-mic-clip" aria-label="Input clipping indicator">CLIP</span>
+      </div>
+      <div class="cp-meter" id="cp-mic-meter" role="meter"
+           aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="cp-meter-fill lvl-ok" id="cp-mic-meter-fill"></div>
+        <span class="cp-meter-tick t70"></span>
+        <span class="cp-meter-tick t90"></span>
+      </div>
+    </div>
+
+    <div class="cp-row">
+      <div class="cp-row-top">
+        <span class="cp-label">MIC&nbsp;GAIN</span>
+        <span class="cp-value" id="cp-mic-val">—</span>
+      </div>
+      <div class="cp-slider" id="cp-mic" role="slider" tabindex="0"
+           aria-label="Mic gain" aria-valuemin="0" aria-valuemax="150" aria-valuenow="0">
+        <div class="cp-track"><div class="cp-fill" id="cp-mic-fill"></div></div>
+        <div class="cp-thumb" id="cp-mic-thumb"></div>
+      </div>
+    </div>
+
     <!-- Push-to-Talk (press & hold) -->
     <button id="cp-ptt" class="cp-ptt" type="button" aria-label="Push to talk (press and hold)">
       <span class="cp-ptt-ring"></span>

@@ -234,7 +234,14 @@ def _inject(text: str) -> None:
     route = wh.get("route", "voice") or "voice"
     secret = str(wh.get("secret", "") or "")
 
-    body = json.dumps({"transcript": text, "type": "voice"}).encode("utf-8")
+    # Pin a STABLE conversation so consecutive voice turns thread into ONE
+    # ongoing agent conversation (continuity) instead of a fresh session each
+    # time. The gateway webhook honors this (payload conversation_id) — see the
+    # webhook.py conversation patch. Default "evy-voice"; override per device.
+    convo = str(_opt("conversation_id", "evy-voice") or "evy-voice")
+    body = json.dumps(
+        {"transcript": text, "type": "voice", "conversation_id": convo}
+    ).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     if secret and secret != _INSECURE_NO_AUTH:
         headers["X-Webhook-Signature"] = hmac.new(

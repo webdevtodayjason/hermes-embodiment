@@ -42,3 +42,6 @@ id_ed25519
 *_key
 *_key.pub
 .ssh/
+
+# --- Internal orchestration ledger (never published) ---
+ORCHESTRATION.md

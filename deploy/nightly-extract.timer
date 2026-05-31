@@ -1,0 +1,17 @@
+# systemd USER timer — fire nightly-extract.service daily at ~04:30 local time.
+# Install: see nightly-extract.service header.
+#   systemctl --user enable --now nightly-extract.timer
+#   systemctl --user list-timers nightly-extract.timer   # confirm next run
+
+[Unit]
+Description=Nightly trigger for conversation -> holographic memory extraction
+
+[Timer]
+# Daily at 04:30 local time. Randomize a little so it never lands on the dot.
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=300
+# If the Pi was asleep/off at 04:30, run as soon as it can afterwards.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

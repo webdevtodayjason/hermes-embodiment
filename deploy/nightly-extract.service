@@ -1,0 +1,39 @@
+# systemd USER unit — nightly conversation → holographic-memory extraction.
+# Install on the Pi:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/nightly-extract.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now nightly-extract.timer
+#
+# Paths assume the embody plugin was installed to ~/.hermes/plugins/embody/
+# (per plugin.yaml). Adjust ExecStart if the repo lives elsewhere.
+#
+# NOTE (load-bearing): ExecStart passes --write. WITHOUT it the job dry-runs and
+# writes NOTHING — a silent no-op that still exits 0 and looks healthy. Keep --write.
+
+[Unit]
+Description=Nightly conversation -> holographic memory extraction (yesterday)
+# Reference: MEMORY_EXTRACTION.md in the embody plugin.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# LLM_API_KEY (LM Studio Bearer key) is NOT inlined here. team-lead creates a
+# dedicated, mode-600 file on the Pi:  %h/.hermes/nightly-extract.env  containing
+#   LLM_API_KEY=<lm studio key>
+# It must be systemd-parseable: KEY=VALUE lines, no `export`, no shell quoting.
+EnvironmentFile=%h/.hermes/nightly-extract.env
+# Point LLM_BASE_URL at your local OpenAI-compatible LLM endpoint. The job probes
+# LLM_BASE_URL first, then the optional LLM_BASE_URL_FALLBACK. Surfaced here to tune.
+Environment=LLM_BASE_URL=http://localhost:1234/v1
+# Environment=LLM_BASE_URL_FALLBACK=
+Environment=LLM_MODEL=qwen/qwen3.6-27b
+Environment=CONFIDENCE_THRESHOLD=0.7
+# --write makes it persist; --date defaults to yesterday inside the job.
+ExecStart=%h/.hermes/hermes-agent/venv/bin/python %h/.hermes/plugins/embody/scripts/nightly_extract.py --write
+# Don't let a quiet/failed night wedge anything; just log and move on.
+TimeoutStartSec=900
+Nice=10
+
+[Install]
+WantedBy=default.target

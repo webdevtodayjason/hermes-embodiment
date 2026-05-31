@@ -176,6 +176,53 @@ def get_mic_gain() -> int:
     return 0
 
 
+def set_mic_mute(muted) -> bool:
+    """Mute/unmute the default SOURCE (mic). Returns the bool applied. While muted,
+    capture clients (PTT, wake, the level monitor) receive silence — so it's a real
+    privacy/listen switch. No-ops (still returns the bool) when wpctl is absent."""
+    m = bool(muted)
+    _run_wpctl(["set-mute", _DEFAULT_SOURCE, "1" if m else "0"])
+    return m
+
+
+def get_mic_mute() -> bool:
+    """True if the default source is muted (parsed from wpctl's ``[MUTED]`` flag).
+    False when wpctl is absent/unreadable."""
+    cp = _run_wpctl(["get-volume", _DEFAULT_SOURCE])
+    if cp is None or cp.returncode != 0 or not cp.stdout:
+        return False
+    return "MUTED" in cp.stdout.upper()
+
+
+# --------------------------------------------------------------------------- #
+# Camera enable/disable (privacy/intent flag)
+# --------------------------------------------------------------------------- #
+# A persistent on/off flag for the camera. There is no live vision pipeline yet,
+# so this is the privacy SWITCH that a future vision layer MUST honor before it
+# opens /dev/video* — not a driver-level power cut. Absent file => enabled (on).
+_CAMERA_FLAG = os.path.expanduser("~/.hermes/embody_camera_enabled")
+
+
+def set_camera_enabled(enabled) -> bool:
+    """Set the camera privacy flag. Returns the bool applied. Best-effort; never raises."""
+    val = bool(enabled)
+    try:
+        with open(_CAMERA_FLAG, "w") as fh:
+            fh.write("1" if val else "0")
+    except OSError:
+        logger.debug("camera flag write failed (ignored).", exc_info=True)
+    return val
+
+
+def get_camera_enabled() -> bool:
+    """Current camera flag (default True when no flag file exists). Never raises."""
+    try:
+        with open(_CAMERA_FLAG) as fh:
+            return fh.read().strip() != "0"
+    except OSError:
+        return True
+
+
 def _run_wpctl(args: list) -> "subprocess.CompletedProcess | None":
     """Run ``wpctl <args>`` on the user PipeWire bus. Returns the completed process,
     or None if wpctl is absent / the call errored. Never raises."""
@@ -203,7 +250,13 @@ def read_state() -> dict:
 
     (Liveness of "listening" is owned by core.state, which adds it to the response.)
     """
-    return {"brightness": get_brightness(), "volume": get_volume(), "mic_gain": get_mic_gain()}
+    return {
+        "brightness": get_brightness(),
+        "volume": get_volume(),
+        "mic_gain": get_mic_gain(),
+        "mic_muted": get_mic_mute(),
+        "camera_enabled": get_camera_enabled(),
+    }
 
 
 def set_ptt_callback(fn) -> None:
@@ -279,6 +332,8 @@ __all__ = [
     "set_brightness", "get_brightness",
     "set_volume", "get_volume",
     "set_mic_gain", "get_mic_gain",
+    "set_mic_mute", "get_mic_mute",
+    "set_camera_enabled", "get_camera_enabled",
     "read_state", "ptt", "set_ptt_callback",
     "shutdown",
 ]

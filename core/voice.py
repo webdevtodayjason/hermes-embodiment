@@ -176,7 +176,12 @@ def _speak_worker(text, on_start, on_done):
         if voice_cfg.get("enabled", True) is False:
             return  # speech disabled; `finally` still resets state to idle
 
-        clean = _strip_markdown(text or "")
+        # Belt 1: strip injected <memory-context>…</memory-context> span(s) so a
+        # memory-injection/housekeeping payload is never read aloud — THEN strip
+        # markdown. Belt 2: if nothing speakable remains, SKIP TTS entirely. The
+        # `finally` below still fires on_done (cancel isn't set), so state resets
+        # cleanly to idle even though we never voiced anything.
+        clean = _strip_markdown(_strip_memory_context(text or ""))
         if not clean.strip():
             return
 
@@ -459,6 +464,25 @@ def _device() -> str:
 # --------------------------------------------------------------------------- #
 # Helpers (unchanged)
 # --------------------------------------------------------------------------- #
+# Injected memory/housekeeping payloads arrive wrapped in
+# <memory-context>…</memory-context>. They must NEVER be read aloud, and a turn that
+# is ONLY such an injection must not voice junk — so strip every such span before TTS.
+# Non-greedy + DOTALL handles multiline spans; IGNORECASE + tolerant tag matching
+# (optional attributes, stray whitespace in the close tag) handles real-world variants.
+_MEMORY_CONTEXT_RE = re.compile(
+    r"<\s*memory-context\b[^>]*>.*?<\s*/\s*memory-context\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_memory_context(text: str) -> str:
+    """Remove any/all ``<memory-context>…</memory-context>`` span(s) from ``text``.
+    Best-effort: returns the input unchanged if there's nothing to strip."""
+    if not text:
+        return ""
+    return _MEMORY_CONTEXT_RE.sub(" ", text)
+
+
 def _strip_markdown(text: str) -> str:
     """Best-effort strip of common markdown so TTS doesn't read syntax aloud."""
     if not text:

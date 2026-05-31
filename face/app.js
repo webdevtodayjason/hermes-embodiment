@@ -12,6 +12,11 @@ const CONFIG = {
   baseParticleSpeed: 0.85
 };
 
+// Content stage idle auto-hide: if no new SSE `show` frame arrives within this
+// window, the stage auto-dismisses so it can never get trapped open. Long enough
+// to read content, short enough to clear a forgotten panel. Tune here.
+const STAGE_AUTO_HIDE_MS = 180000; // 3 minutes
+
 // The embody state server (SSE) emits these five states; map them onto Minnie's
 // expressions. 'working' has no native expression -> use the focused 'thinking'.
 // The other 11 expressions stay reachable via setState (future mood layer).
@@ -364,6 +369,7 @@ class MinnieController {
     this.lookTimer = null;
     this.headTimer = null;
     this.speakingMockInterval = null;
+    this.stageHideTimer = null; // content-stage idle auto-hide
 
     this.init();
   }
@@ -395,6 +401,7 @@ class MinnieController {
 
     this.initParticles();
     this.bindEvents();
+    this.bindStageDismiss();
     this.startLoop();
 
     // Set initial state
@@ -862,6 +869,14 @@ class MinnieController {
           moodPresent = true;
           moodVal = data.mood;
         }
+        // CONTENT STAGE: transient "show" frame. Use hasOwnProperty so an
+        // EXPLICIT null is honored as "hide" (a missing key leaves it untouched).
+        // Object -> shrink her left + slide the content panel in; null -> hide.
+        // No `state` here, so it falls through to `if (!raw) return` like the
+        // volume / input_rms frames — the flow below is undisturbed.
+        if (Object.prototype.hasOwnProperty.call(data, 'show')) {
+          this.handleStageShow(data.show);
+        }
       } catch (err) {
         raw = String(event.data).trim().toLowerCase(); // tolerate a bare token
       }
@@ -884,6 +899,177 @@ class MinnieController {
     const delay = this.sseBackoff || 1000;
     this.sseRetry = setTimeout(() => this.connectSSE(), delay);
     this.sseBackoff = Math.min(delay * 2, 10000);
+  }
+
+  // --- CONTENT STAGE (SSE "show" frames) -------------------------------------
+  // show === object -> render {title, content, format} into #cp-stage, slide it
+  //   in (cp-stage-open) and shrink her to the left (#face-container.face-shrunk).
+  // show === null (or any falsy) -> hide: glide her back to full-screen, slide
+  //   the panel out. Fully null-guarded, so it can never throw.
+  handleStageShow(show) {
+    const stage = document.getElementById('cp-stage');
+    const container = document.getElementById('face-container');
+    if (show && typeof show === 'object') {
+      const titleEl = document.getElementById('cp-stage-title');
+      const bodyEl = document.getElementById('cp-stage-body');
+      if (titleEl) titleEl.textContent = show.title || '';
+      if (bodyEl) {
+        const content = (show.content == null) ? '' : String(show.content);
+        if (show.format === 'markdown') {
+          // SAFE: escape first (kills XSS), THEN add only our own tags.
+          bodyEl.innerHTML = this.renderStageMarkdown(content);
+        } else if (show.format === 'image') {
+          // SECURITY: only render inline base64 data-image URIs. Anything else
+          // (a remote URL, javascript:, arbitrary text) is REJECTED and the src
+          // is NEVER set — guards XSS / SSRF. data:image is non-scripting in an
+          // <img> context, so it's safe to display.
+          if (/^data:image\//i.test(content)) {
+            const img = document.createElement('img');
+            img.className = 'cp-stage-img';
+            img.alt = show.title || 'content image';
+            img.src = content;
+            bodyEl.textContent = '';   // clear safely (no innerHTML)
+            bodyEl.appendChild(img);
+          } else {
+            bodyEl.textContent = 'Unsupported or invalid image data.';
+          }
+        } else {
+          // 'text' (and any unknown format) -> plain text, never parsed as HTML.
+          bodyEl.textContent = content;
+        }
+      }
+      if (stage) {
+        stage.classList.add('cp-stage-open');
+        stage.setAttribute('aria-hidden', 'false');
+      }
+      if (container) container.classList.add('face-shrunk');
+      // (Re)arm the idle auto-hide safety net on every show frame.
+      this.armStageAutoHide();
+    } else {
+      // Explicit null (or any falsy) -> hide via the shared dismiss path.
+      this.hideStage();
+    }
+  }
+
+  // Hide/dismiss the content stage: glide her back to full-screen, slide the
+  // panel out, mark it hidden, and cancel the idle auto-hide timer. This is the
+  // SINGLE dismiss path — used by a {"show":null} SSE frame, a tap on the stage,
+  // the × button, AND the auto-hide timeout. Idempotent + null-guarded.
+  hideStage() {
+    const stage = document.getElementById('cp-stage');
+    const container = document.getElementById('face-container');
+    if (stage) {
+      stage.classList.remove('cp-stage-open');
+      stage.setAttribute('aria-hidden', 'true');
+    }
+    if (container) container.classList.remove('face-shrunk');
+    if (this.stageHideTimer) { clearTimeout(this.stageHideTimer); this.stageHideTimer = null; }
+  }
+
+  // Idle auto-hide safety net: if no new show frame arrives for STAGE_AUTO_HIDE_MS,
+  // dismiss the stage so it can never get trapped open. Reset on every show frame.
+  armStageAutoHide() {
+    if (this.stageHideTimer) clearTimeout(this.stageHideTimer);
+    this.stageHideTimer = setTimeout(() => {
+      this.stageHideTimer = null;
+      this.hideStage();
+    }, STAGE_AUTO_HIDE_MS);
+  }
+
+  // Wire the user-facing dismiss controls once (from init). Local hide only —
+  // the stage is SSE-driven + transient, so no server call is needed.
+  //
+  // Two routes:
+  //  (1) the × button — explicit dismiss.
+  //  (2) "tap HER to come back" — a pointerdown on the face WHILE it is shrunk
+  //      (stage open) dismisses. We do NOT dismiss on a tap of #cp-stage itself,
+  //      so its body scrolls freely (logs / long markdown).
+  //
+  // Gating vs. the poke handler: the face-tap listener is on #face-container in
+  // the CAPTURE phase and bails unless `.face-shrunk` is set. When shrunk it
+  // calls stopPropagation(), so the event never descends to FaceTouch's handler
+  // (bubble, on #face-touch-zones — a descendant) → tap = dismiss, never a poke.
+  // When NOT shrunk it returns immediately, so a normal full-screen face tap
+  // still pokes. The tap-ripple (document, capture) runs before this, so it is
+  // unaffected.
+  bindStageDismiss() {
+    const closeBtn = document.getElementById('cp-stage-close');
+    const container = document.getElementById('face-container');
+    if (closeBtn) {
+      closeBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.hideStage();
+      });
+    }
+    if (container) {
+      container.addEventListener('pointerdown', (e) => {
+        // Only intercept while shrunk (stage open). Full-screen face -> let the
+        // normal poke-reactions happen.
+        if (!container.classList.contains('face-shrunk')) return;
+        e.preventDefault();
+        e.stopPropagation(); // pre-empt the descendant FaceTouch poke handler
+        this.hideStage();
+      }, true); // CAPTURE: fire before FaceTouch's bubble handler on the zones
+    }
+  }
+
+  // Minimal, SAFE markdown -> HTML. Escapes &<>" FIRST so the input can carry no
+  // live markup, THEN applies a few formatting rules to the escaped string. Every
+  // emitted tag is ours — never sets innerHTML from unescaped content (no XSS).
+  // Supports: #/##/### headings, "- " bullet lists, blank-line paragraphs,
+  // soft line-breaks (<br>), plus inline **bold** and `code`.
+  renderStageMarkdown(src) {
+    const esc = String(src)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    const lines = esc.split('\n');
+    const out = [];
+    let para = [];
+    let list = [];
+    const flushPara = () => {
+      if (para.length) {
+        out.push('<p>' + para.map((l) => this.stageInline(l)).join('<br>') + '</p>');
+        para = [];
+      }
+    };
+    const flushList = () => {
+      if (list.length) {
+        out.push('<ul>' + list.map((l) => '<li>' + this.stageInline(l) + '</li>').join('') + '</ul>');
+        list = [];
+      }
+    };
+    for (const line of lines) {
+      const h = line.match(/^(#{1,3})\s+(.*)$/);
+      const b = line.match(/^\s*-\s+(.*)$/);
+      if (h) {
+        flushPara();
+        flushList();
+        const lvl = h[1].length;
+        out.push('<h' + lvl + '>' + this.stageInline(h[2]) + '</h' + lvl + '>');
+      } else if (b) {
+        flushPara();
+        list.push(b[1]);
+      } else if (line.trim() === '') {
+        flushPara();
+        flushList();
+      } else {
+        flushList();
+        para.push(line);
+      }
+    }
+    flushPara();
+    flushList();
+    return out.join('');
+  }
+
+  // Inline rules applied to an ALREADY-ESCAPED string: **bold** and `code`.
+  stageInline(s) {
+    return s
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
   }
 
   // --- Persona name from /config (graceful 404 -> keep MINNIE) ---
@@ -2016,8 +2202,8 @@ class ControlPanel {
       val: 'cp-vol-val', min: 0, max: 150, suffix: '%', path: '/control/volume'
     });
     this.mic = this.setupSlider({
-      root: 'cp-mic', fill: 'cp-mic-fill', thumb: 'cp-mic-thumb',
-      val: 'cp-mic-val', min: 0, max: 150, suffix: '%', path: '/control/mic_gain'
+      root: 'cp-micgain', fill: 'cp-micgain-fill', thumb: 'cp-micgain-thumb',
+      val: 'cp-micgain-val', min: 0, max: 150, suffix: '%', path: '/control/mic_gain'
     });
 
     // Live mic VU meter elements + a global hook the SSE stream pumps into.
@@ -2597,6 +2783,52 @@ class MicButton {
   }
 }
 
+// Toggle fabs (mic-mute, camera) — small round bottom-left buttons. Tap to flip a
+// boolean control; the "off" look (red + slash) is shown via the .cp-off class.
+// Uses the endpoint's {action:'toggle'} so the server stays the source of truth.
+class ToggleFab {
+  constructor(opts) {
+    this.btn = document.getElementById(opts.id);
+    if (!this.btn) return; // markup absent -> inert
+    this.opts = opts;
+    this.off = false;
+    this.btn.addEventListener('pointerup', (e) => {
+      e.preventDefault(); e.stopPropagation(); // don't fall through to face touch-zones
+      this.toggle();
+    });
+    this.refresh();
+  }
+  _set(off) {
+    this.off = !!off;
+    this.btn.classList.toggle('cp-off', this.off);
+    this.btn.setAttribute('aria-pressed', String(this.off));
+  }
+  async refresh() {
+    try {
+      const c = new AbortController(); const t = setTimeout(() => c.abort(), 1500);
+      const r = await fetch('/control/state', { cache: 'no-store', signal: c.signal });
+      clearTimeout(t);
+      if (r && r.ok) this._set(this.opts.offWhen(await r.json()));
+    } catch (e) { /* offline — leave default */ }
+  }
+  async toggle() {
+    this._set(!this.off); // optimistic
+    try {
+      const c = new AbortController(); const t = setTimeout(() => c.abort(), 1500);
+      const r = await fetch(this.opts.path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle' }), cache: 'no-store', signal: c.signal
+      });
+      clearTimeout(t);
+      if (r && r.ok) this._set(this.opts.offWhen(await r.json())); // server is truth
+    } catch (e) { /* offline — keep optimistic */ }
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   window.micButton = new MicButton();
+  // mic-mute: "off" (red + slash) === muted
+  window.muteFab = new ToggleFab({ id: 'cp-mute', path: '/control/mic_mute', offWhen: (s) => !!s.mic_muted });
+  // camera: "off" (red + slash) === disabled
+  window.camFab = new ToggleFab({ id: 'cp-cam', path: '/control/camera', offWhen: (s) => s.camera_enabled === false });
 });

@@ -696,6 +696,133 @@ body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; botto
 .cp-backdrop.cp-visible { opacity: 1; }
 
 /* Panel: slides up from the bottom edge. Translucent dark + neon trim. */
+/* ==========================================================================
+   CONTENT STAGE  (SSE "show" frames)
+   Minnie scales down + glides to the left while a content panel slides in from
+   the right. GPU transforms (translate/scale) + cubic-bezier so it stays fluid;
+   NO layout-thrashing props animate. Shrink rides on #face-container (NOT
+   #face-group — the head-physics loop owns #face-group's transform every frame).
+   ========================================================================== */
+#face-container {
+  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: center left;
+  will-change: transform;
+}
+/* Shrunk: she sits in the left ~third, scaled down so she's FULLY on-screen
+   (no left-wing clip) and clear of the 62vw panel. Geometry (800x480 kiosk,
+   origin center-left): glasses span screen-x ~[46,754] at full scale; with
+   x' = s*(x + t*800), scale .40 + translateX(-3%) lands her ~[9px, 292px] —
+   ~9px left margin, ~12px gap before the panel's left edge at 304px. */
+#face-container.face-shrunk { transform: scale(0.40) translateX(-3%); }
+
+/* Right-side content panel — translucent neon, matches .cp-panel surface. */
+#cp-stage {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 62vw;
+  z-index: 45;
+  transform: translateX(100%);          /* off-screen right until a show frame */
+  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: rgba(6, 6, 18, 0.6);
+  border-left: 1px solid rgba(189, 0, 255, 0.35);
+  box-shadow: -8px 0 40px rgba(0, 0, 0, 0.5), 0 0 28px rgba(0, 240, 255, 0.12);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+#cp-stage.cp-stage-open { transform: translateX(0); }
+
+/* Dismiss "×" — subtle neon, top-right corner, above the title/body. */
+#cp-stage-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(0, 240, 255, 0.28);
+  color: var(--neon-cyan);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 0 6px rgba(0, 240, 255, 0.45);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#cp-stage-close:hover {
+  background: rgba(0, 240, 255, 0.1);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
+}
+
+#cp-stage-title {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #ffffff;
+  text-shadow: 0 0 8px rgba(189, 0, 255, 0.45);
+  padding: 22px 54px 12px 26px;   /* extra right pad clears the × button */
+  border-bottom: 1px solid rgba(0, 240, 255, 0.18);
+}
+/* No title -> no empty header bar. */
+#cp-stage-title:empty { display: none; }
+
+#cp-stage-body {
+  overflow-y: auto;
+  height: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 18px 26px 26px 26px;
+  color: rgba(235, 240, 255, 0.92);
+}
+/* Markdown elements (escaped-then-formatted in app.js) — readable on the dark
+   panel; code/monospace friendly. */
+#cp-stage-body h1, #cp-stage-body h2, #cp-stage-body h3 {
+  font-family: var(--font-display);
+  color: var(--neon-cyan);
+  text-shadow: 0 0 6px rgba(0, 240, 255, 0.35);
+  margin: 0.6em 0 0.3em 0;
+  line-height: 1.25;
+}
+#cp-stage-body h1 { font-size: 1.5em; }
+#cp-stage-body h2 { font-size: 1.28em; }
+#cp-stage-body h3 { font-size: 1.12em; }
+#cp-stage-body p { margin: 0 0 0.7em 0; }
+#cp-stage-body ul { margin: 0 0 0.7em 0; padding-left: 1.4em; }
+#cp-stage-body li { margin: 0.15em 0; }
+#cp-stage-body strong { color: #ffffff; font-weight: 700; }
+#cp-stage-body code {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.92em;
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid rgba(0, 240, 255, 0.18);
+  border-radius: 5px;
+  padding: 0.05em 0.4em;
+  color: #b8f6ff;
+}
+/* Image format: fit-to-panel, aspect-preserving, horizontally centered. */
+#cp-stage-body img.cp-stage-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  margin: 0 auto;
+  border-radius: 6px;
+}
+
 .cp-panel {
   position: fixed;
   left: 50%;
@@ -939,6 +1066,48 @@ body:not(.debug) .brand-container { position: absolute; left: 0; right: 0; botto
   0%   { transform: scale(0.92); opacity: 0.9; }
   100% { transform: scale(1.35); opacity: 0; }
 }
+
+/* Mic-mute + camera toggle fabs — small round icons in the bottom-left, beside
+   the hold-to-talk button. Tap to toggle; OFF (muted / camera-disabled) goes red
+   with a slash through the glyph. Same translucent neon style as .cp-mic. */
+.cp-fab {
+  position: fixed;
+  bottom: 30px;
+  z-index: 42;                       /* same layer as the PTT mic button */
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 8, 20, 0.45);
+  border: 1.5px solid rgba(0, 240, 255, 0.45);
+  color: var(--neon-cyan);
+  cursor: pointer;
+  outline: none;
+  touch-action: manipulation;        /* tap toggle; no double-tap zoom / scroll */
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), 0 0 12px rgba(0, 240, 255, 0.18);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+              box-shadow 0.15s ease, transform 0.08s ease;
+}
+#cp-mute { left: 108px; }            /* just right of the 72px PTT (left:22) */
+#cp-cam  { left: 176px; }
+.cp-fab:hover  { background: rgba(8, 8, 20, 0.6); }
+.cp-fab:active { transform: scale(0.92); }
+.cp-fab-glyph  { width: 26px; height: 26px; filter: drop-shadow(0 0 4px rgba(0, 240, 255, 0.5)); }
+.cp-slash      { display: none; }    /* the diagonal strike — only shown when OFF */
+
+/* OFF state: mic muted / camera disabled -> red + slash */
+.cp-fab.cp-off {
+  color: #ff5d6c;
+  border-color: rgba(255, 93, 108, 0.6);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), 0 0 14px rgba(255, 93, 108, 0.32);
+}
+.cp-fab.cp-off .cp-fab-glyph { filter: drop-shadow(0 0 6px rgba(255, 93, 108, 0.8)); }
+.cp-fab.cp-off .cp-slash     { display: inline; }
 
 /* Transient toast — brief, dismissible message (e.g. shutdown failure). Sits
    above everything; tap to dismiss. Never blocks the UI (auto-hides). */

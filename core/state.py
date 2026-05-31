@@ -21,6 +21,10 @@ Endpoints
   Live mic level: a continuous mic monitor (parecord) broadcasts transient
   ``{"input_rms", "input_peak"}`` frames on /events for the panel's VU meter.
   POST /control/mood       {"value":"<mood>"[,"ttl":<s>]} -> set gateway mood (touch reactions/testing)
+  POST /control/show       {"content":<str>[,"title":<str>,"format":"text|markdown|image"]}
+                           -> display content on the face ("image" => content is a
+                           data:image/...;base64,... URI, max ~3MB); {"action":"hide"}
+                           (or blank content) hides it. Transient SSE frame, not in snapshot().
   POST /control/shutdown   {"confirm":true}        -> graceful poweroff (~1.5s after the 200)
 
   The /control/* surface is the kiosk's hardware control panel; all device access
@@ -226,6 +230,35 @@ def broadcast_input_level(rms: float, peak: float = 0.0) -> None:
     except (TypeError, ValueError):
         return
     _broadcast(json.dumps({"input_rms": r, "input_peak": p}))
+
+
+def broadcast_show(title, content, format="markdown") -> None:
+    """Push a transient ``{"show": {...}}`` frame to the face over ``/events`` to
+    display arbitrary content (e.g. a card/overlay) on the kiosk.
+
+    Frame: ``{"show": {"title": <str|null>, "content": <str>, "format": "text"|
+    "markdown"|"image"}}``. ``title`` is coerced to str (or kept None), ``content``
+    to str, and ``format`` to "text", "markdown" or "image" (anything else ->
+    "markdown"). For "image", ``content`` is a ``data:image/...;base64,...`` URI
+    passed straight through. Like the other transient frames it is NOT stored in
+    snapshot(). Best-effort; never raises.
+    """
+    try:
+        t = None if title is None else str(title)
+        c = str(content)
+        fmt = format if format in ("text", "markdown", "image") else "markdown"
+        _broadcast(json.dumps({"show": {"title": t, "content": c, "format": fmt}}))
+    except Exception as exc:  # noqa: BLE001 — best-effort render signal, never crash
+        _warn(f"broadcast_show failed: {exc}")
+
+
+def broadcast_show_hide() -> None:
+    """Push a transient ``{"show": null}`` frame to tell the face to hide whatever
+    content ``broadcast_show`` displayed. NOT in snapshot(). Best-effort; never raises."""
+    try:
+        _broadcast(json.dumps({"show": None}))
+    except Exception as exc:  # noqa: BLE001 — best-effort render signal, never crash
+        _warn(f"broadcast_show_hide failed: {exc}")
 
 
 # --- live mic-level monitor (parecord -> RMS/peak -> SSE) --------------------
@@ -445,6 +478,63 @@ def _ctl_mic_gain(body: dict):
     return {"ok": True, "mic_gain": _controls.set_mic_gain(pct)}
 
 
+def _ctl_mic_mute(body: dict):
+    # {"muted": true|false}; or {"action":"toggle"} to flip the current state.
+    if str(body.get("action", "")).strip().lower() == "toggle":
+        target = not _controls.get_mic_mute()
+    else:
+        target = _coerce_bool(body.get("muted"))
+        if target is None:
+            return {"ok": False, "error": "muted must be a boolean (or action:'toggle')"}, 400
+    return {"ok": True, "mic_muted": _controls.set_mic_mute(target)}
+
+
+def _ctl_camera(body: dict):
+    # {"enabled": true|false}; or {"action":"toggle"} to flip the current state.
+    if str(body.get("action", "")).strip().lower() == "toggle":
+        target = not _controls.get_camera_enabled()
+    else:
+        target = _coerce_bool(body.get("enabled"))
+        if target is None:
+            return {"ok": False, "error": "enabled must be a boolean (or action:'toggle')"}, 400
+    return {"ok": True, "camera_enabled": _controls.set_camera_enabled(target)}
+
+
+def _ctl_show(body: dict):
+    # Tell the face to display content (a card/overlay) or hide it. Hides when
+    # action=="hide" OR content is missing/blank; otherwise content must be a
+    # string. Optional `title`; `format` is "text"|"markdown"|"image" (default
+    # markdown). For "image", content is a data:image/...;base64,... data URI.
+    content = body.get("content")
+    if str(body.get("action", "")).strip().lower() == "hide" \
+            or content is None or (isinstance(content, str) and not content.strip()):
+        broadcast_show_hide()
+        return {"ok": True, "showing": False}
+    if not isinstance(content, str):
+        return {"ok": False, "error": "content must be a string"}, 400
+    # Size guard: a giant frame (e.g. a base64 image data URI) would choke the SSE
+    # queue, so reject anything over ~3MB rather than broadcast it.
+    if len(content) > 3_000_000:
+        return {"ok": False, "error": "image too large (max ~3MB)"}, 400
+    broadcast_show(body.get("title"), content, body.get("format", "markdown"))
+    return {"ok": True, "showing": True}
+
+
+def _coerce_bool(value):
+    """True/False from a JSON bool, or 1/0, or 'true'/'false'/'on'/'off'; None if unclear."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "on", "yes"):
+            return True
+        if v in ("false", "0", "off", "no"):
+            return False
+    return None
+
+
 def _ctl_ptt(body: dict):
     action = str(body.get("action", "")).strip().lower()
     if action == "start":
@@ -596,8 +686,11 @@ class _Handler(BaseHTTPRequestHandler):
             "/control/brightness": _ctl_brightness,
             "/control/volume":     _ctl_volume,
             "/control/mic_gain":   _ctl_mic_gain,
+            "/control/mic_mute":   _ctl_mic_mute,
+            "/control/camera":     _ctl_camera,
             "/control/ptt":        _ctl_ptt,
             "/control/mood":       _ctl_mood,
+            "/control/show":       _ctl_show,
             "/control/shutdown":   _ctl_shutdown,
         }.get(path)
         if handler is None:

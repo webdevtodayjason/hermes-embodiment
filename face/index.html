@@ -553,12 +553,12 @@
     <div class="cp-row">
       <div class="cp-row-top">
         <span class="cp-label">MIC&nbsp;GAIN</span>
-        <span class="cp-value" id="cp-mic-val">—</span>
+        <span class="cp-value" id="cp-micgain-val">—</span>
       </div>
-      <div class="cp-slider" id="cp-mic" role="slider" tabindex="0"
+      <div class="cp-slider" id="cp-micgain" role="slider" tabindex="0"
            aria-label="Mic gain" aria-valuemin="0" aria-valuemax="150" aria-valuenow="0">
-        <div class="cp-track"><div class="cp-fill" id="cp-mic-fill"></div></div>
-        <div class="cp-thumb" id="cp-mic-thumb"></div>
+        <div class="cp-track"><div class="cp-fill" id="cp-micgain-fill"></div></div>
+        <div class="cp-thumb" id="cp-micgain-thumb"></div>
       </div>
     </div>
 
@@ -569,6 +569,22 @@
       <span class="cp-ptt-hint">press &amp; hold</span>
     </button>
   </section>
+
+  <!-- ========================================================================
+       CONTENT STAGE  (SSE "show" frames) — a translucent neon panel that glides
+       in from the right holding content while Minnie fluidly scales down and
+       slides to the left third of the screen. On a hide frame she glides back
+       to full-screen. Fixed-position via CSS; GPU transforms only.
+       Contract:  show -> {"show":{"title":<str|null>,"content":<str>,"format":"text"|"markdown"}}
+                  hide -> {"show":null}
+       Driven in app.js (MinnieController.onmessage -> data.show branch).
+       ===================================================================== -->
+  <aside id="cp-stage" aria-hidden="true">
+    <!-- Visible dismiss affordance (tap anywhere on the stage also dismisses). -->
+    <button id="cp-stage-close" type="button" aria-label="Dismiss content">×</button>
+    <div id="cp-stage-title"></div>
+    <div id="cp-stage-body"></div>
+  </aside>
 
   <!-- Shutdown CONFIRM modal — the mis-tap guard: poweroff requires the explicit
        Yes. No / Cancel / tap-away / Escape dismiss it with zero side effects. -->
@@ -604,6 +620,28 @@
       <!-- stand -->
       <line x1="12" y1="17" x2="12" y2="20.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
       <line x1="8.5" y1="20.5" x2="15.5" y2="20.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  </button>
+
+  <!-- Mic-mute toggle (bottom-left, beside hold-to-talk). Tap to mute/unmute the
+       mic; muted => red with a slash. POST /control/mic_mute. -->
+  <button id="cp-mute" class="cp-fab" type="button" aria-label="Mute microphone" aria-pressed="false">
+    <svg class="cp-fab-glyph" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="9" y="2.5" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <path d="M6 11 a6 6 0 0 0 12 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="12" y1="17" x2="12" y2="20.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="8.5" y1="20.5" x2="15.5" y2="20.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <line class="cp-slash" x1="4" y1="3.5" x2="20" y2="20.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </button>
+
+  <!-- Camera enable/disable toggle. Tap to toggle the camera privacy flag;
+       disabled => red with a slash. POST /control/camera. -->
+  <button id="cp-cam" class="cp-fab" type="button" aria-label="Toggle camera" aria-pressed="true">
+    <svg class="cp-fab-glyph" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="2.5" y="7" width="13" height="10.5" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <path d="M15.5 10.5 L21 7.5 v9 l-5.5 -3 z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+      <line class="cp-slash" x1="4" y1="3.5" x2="20" y2="20.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </svg>
   </button>
 
